@@ -1,6 +1,7 @@
 import os
 import shutil
 import argparse
+import subprocess
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
@@ -21,15 +22,15 @@ def has_met_movement_thresholds(x, y, thresh_rot, thresh_translate):
         return True
     return False
 
+def get_num_frames(args):
+    img_src = os.path.join(args.root, "data_2d_raw", f"2013_05_28_drive_{args.id}_sync", "image_00", "data_rect")
+    return len([name for name in os.listdir(img_src)])
+
 def get_filtered_ids(args):
     print('Getting frame IDs...', end=' ')
 
     # determine last frame ID if no end arg is given
-    if args.end is None:
-        img_src = os.path.join(args.root, "data_2d_raw", f"2013_05_28_drive_{args.id}_sync", "image_00", "data_rect")
-        end = len([name for name in os.listdir(img_src)])
-    else:
-        end = args.end
+    end = get_num_frames(args) if args.end is None else args.end
 
     # no filtering - return the given range
     if args.method == "interval":
@@ -101,10 +102,10 @@ def make_img(src, dest, frames):
        for f in folders:
         shutil.copy(os.path.join(img_src, f, "data_rect", f"{str(fr).zfill(10)}.png"), os.path.join(img_dest, f))
 
-def make_lidar(src, dest, frames):
+def make_lidar(src, dest, frames, decode_root, num_frames):
     print('Making lidar directory...', end=' ')
     lidar_dest = os.path.join(dest, "lidar")
-    os.makedirs(os.path.join(lidar_dest, "data"), exist_ok=True)
+    os.makedirs(os.path.join(lidar_dest, "raw"), exist_ok=True)
 
     seq = os.path.normpath(dest).split(os.sep)[1]
     lidar_src = os.path.join(src, "data_3d_raw", seq)
@@ -114,8 +115,39 @@ def make_lidar(src, dest, frames):
 
     # copy bin scans
     for fr in frames:
-        shutil.copy(os.path.join(lidar_src, "velodyne_points", "data", f"{str(fr).zfill(10)}.bin"), os.path.join(lidar_dest, "data"))
+        shutil.copy(os.path.join(lidar_src, "velodyne_points", "data", f"{str(fr).zfill(10)}.bin"), os.path.join(lidar_dest, "raw"))
 
+    # decode data - need to split this up to conserve RAM usage (~500 frames = 8 GB RAM)
+    # while also allowing enough frames (> 200) for the script to run without errors
+    if decode_root is not None:
+        
+        # cache current directory
+        cwd = os.getcwd()
+        lidar_dest_abs = os.path.abspath(lidar_dest)
+        os.chdir(decode_root)
+        executable = os.path.join(decode_root, "run_accumulation.sh")
+        start = frames[0]
+        stop = frames[-1] if frames[0] != frames[-1] else frames[0] + 1
+
+        for i in range(start, stop, 500):
+            # last block has insufficient frames so move the bounds
+            if stop - i < 200:
+                lower = i
+                upper = min(num_frames - 1, stop + 200)
+                if upper - lower < 200:
+                    lower -= (upper - lower)  
+                command = f"{executable} {src} {lidar_dest_abs} {seq} {lower} {upper} 1".split()
+            else:
+                command = f"{executable} {src} {lidar_dest_abs} {seq} {i} {min(stop, i+499)} 1".split()
+            subprocess.run(command)
+        
+        os.chdir(cwd)
+
+        # rename generated directories to data_xxxx_yyyy
+        folders = os.listdir(lidar_dest)
+        for folder in folders:
+            os.rename(os.path.join(lidar_dest, folder), os.path.join(lidar_dest, f"data_{'_'.join(folder.split('_')[-2:])}"))
+        
 def make_poses(src, dest, frames=None):
     print('Making poses directory...', end=' ')
     poses_dest = os.path.join(dest, "poses")
@@ -143,7 +175,7 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--interval", type=int, action="store", default=1, help="Step between selected frames")
     parser.add_argument("-r", type=float, action="store", dest="thresh_rot", default=None, help="Minimum rotation threshold between consecutive frames (deg). If not provided, rotation will not be considered.")
     parser.add_argument("-t", type=float, action="store", dest="thresh_translate", default=None, help="Minimum translation threshold between consecutive frames (m). If not provided, translation will not be considered.")
-    
+    parser.add_argument("-d", "--decode-root", type=str, action="store", default=None, help="Path to folder containing run_accumulation.sh script from kitti360Scripts repository")
     args = parser.parse_args()
 
     # get frame IDs based on filter parameters
@@ -156,5 +188,8 @@ if __name__ == "__main__":
     
     callbacks = [make_calib, make_img, make_lidar, make_poses]
     for f in callbacks:
-        f(args.root, out_dir, frames)
+        if f == make_lidar:
+            f(args.root, out_dir, frames, args.decode_root, get_num_frames(args))
+        else:
+            f(args.root, out_dir, frames)
         print('Done!')
