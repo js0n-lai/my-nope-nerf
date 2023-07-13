@@ -25,7 +25,6 @@ cfg = load_config(args.config, 'configs/default.yaml')
 is_cuda = (torch.cuda.is_available())
 device = torch.device("cuda" if is_cuda else "cpu")
 
-
 out_dir = cfg['training']['out_dir']
 
 test_loader, field = get_dataloader(cfg, mode='train', shuffle=False)
@@ -92,8 +91,8 @@ if args.vis:
     geometry_to_draw.append(frustum_colmap_list)
 
     '''o3d for line drawing'''
-    t_est_list = c2ws_est_to_draw_align2cmp[:, :3, 3]
-    t_cmp_list = gt_poses[:, :3, 3]
+    t_est_list = c2ws_est_to_draw_align2cmp[:, :3, 3].cpu()
+    t_cmp_list = gt_poses[:, :3, 3].cpu()
 
     '''line set to note pose correspondence between two trajs'''
     line_points = torch.cat([t_est_list, t_cmp_list], dim=0).cpu().numpy()  # (2N, 3)

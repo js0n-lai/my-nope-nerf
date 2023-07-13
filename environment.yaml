@@ -9,7 +9,7 @@ dependencies:
   - pytorch=1.7
   - torchvision=0.8.2 
   - torchaudio 
-  - cudatoolkit=10.1
+  - cudatoolkit=11.7
   - cffi
   - cython
   - imageio

@@ -75,12 +75,12 @@ class DataField(object):
             bottom = torch.FloatTensor([0, 0, 0, 1]).unsqueeze(0)
             bottom = bottom.repeat(poses_tensor.shape[0], 1, 1)
             c2ws_colmap = torch.cat([poses_tensor, bottom], 1)
-            
 
         imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
         imgs = np.transpose(imgs, (0, 3, 1, 2))
 
         if customized_focal:
+            print(os.path.join(load_dir, 'intrinsics.npz'))
             focal_gt = np.load(os.path.join(load_dir, 'intrinsics.npz'))['K'].astype(np.float32)
             if resize_factor is None:
                 resize_factor = 1

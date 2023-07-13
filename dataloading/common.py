@@ -86,7 +86,6 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, cr
             
 
 
-    
     img0 = [os.path.join(basedir, img_folder, f) for f in sorted(os.listdir(os.path.join(basedir, img_folder))) \
             if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
     sh = imageio.imread(img0).shape
@@ -130,7 +129,8 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, cr
     
     def imread(f):
         if f.endswith('png'):
-            return imageio.imread(f, ignoregamma=True)
+            return imageio.imread(f)
+            # return imageio.imread(f, ignoregamma=True)
         else:
             return imageio.imread(f)
         

@@ -1,9 +1,9 @@
 depth:
   type: DPT
 dataloading:
-  path: data/nerf_llff_data
-  scene: ['fern']
-  resize_factor: 
+  path: data/2013_05_28_drive_0000_sync
+  scene: ['still_2']
+  resize_factor: 16
   generate_dpt: True
 training:
   mode: 'all'
