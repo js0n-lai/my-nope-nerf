@@ -3,6 +3,7 @@ import shutil
 import argparse
 import subprocess
 import numpy as np
+import yaml
 from scipy.spatial.transform import Rotation as R
 
 def has_met_movement_thresholds(x, y, thresh_rot, thresh_translate):
@@ -109,6 +110,8 @@ def make_img(src, dest, frames, skip_copy=False):
             for f in folders:
                 shutil.copy(os.path.join(img_src, f, "data_rect", f"{str(fr).zfill(10)}.png"), img_dest)
 
+    print('done!')
+
 def make_lidar(src, dest, frames, decode_root, num_frames, skip_copy=False):
     print('Making lidar directory...', end=' ')
     
@@ -128,34 +131,35 @@ def make_lidar(src, dest, frames, decode_root, num_frames, skip_copy=False):
 
         # decode data - need to split this up to conserve RAM usage (~500 frames = 8 GB RAM)
         # while also allowing enough frames (> 200) for the script to run without errors
-        if decode_root is not None:
             
-            # cache current directory
-            cwd = os.getcwd()
-            lidar_dest_abs = os.path.abspath(lidar_dest)
-            os.chdir(decode_root)
-            executable = os.path.join(decode_root, "run_accumulation.sh")
-            start = frames[0]
-            stop = frames[-1] if frames[0] != frames[-1] else frames[0] + 1
+        # cache current directory
+        cwd = os.getcwd()
+        lidar_dest_abs = os.path.abspath(lidar_dest)
+        os.chdir(decode_root)
+        executable = os.path.join(decode_root, "run_accumulation.sh")
+        start = frames[0]
+        stop = frames[-1] if frames[0] != frames[-1] else frames[0] + 1
 
-            for i in range(start, stop, 500):
-                # last block has insufficient frames so move the bounds
-                if stop - i < 200:
-                    lower = i
-                    upper = min(num_frames - 1, stop + 200 - (stop - lower))
-                    if upper - lower < 200:
-                        lower -= 200 - (upper - lower)  
-                    command = f"{executable} {src} {lidar_dest_abs} {seq} {lower} {upper} 1".split()
-                else:
-                    command = f"{executable} {src} {lidar_dest_abs} {seq} {i} {min(stop, i+499)} 1".split()
-                subprocess.run(command)
-            
-            os.chdir(cwd)
+        for i in range(start, stop, 500):
+            # last block has insufficient frames so move the bounds
+            if stop - i < 200:
+                lower = i
+                upper = min(num_frames - 1, stop + 200 - (stop - lower))
+                if upper - lower < 200:
+                    lower -= 200 - (upper - lower)  
+                command = f"{executable} {src} {lidar_dest_abs} {seq} {lower} {upper} 1".split()
+            else:
+                command = f"{executable} {src} {lidar_dest_abs} {seq} {i} {min(stop, i+499)} 1".split()
+            subprocess.run(command)
+        
+        os.chdir(cwd)
 
-            # rename generated directories to data_xxxx_yyyy
-            folders = os.listdir(lidar_dest)
-            for folder in folders:
-                os.rename(os.path.join(lidar_dest, folder), os.path.join(lidar_dest, f"data_{'_'.join(folder.split('_')[-2:])}"))
+        # rename generated directories to data_xxxx_yyyy
+        folders = os.listdir(lidar_dest)
+        for folder in folders:
+            os.rename(os.path.join(lidar_dest, folder), os.path.join(lidar_dest, f"data_{'_'.join(folder.split('_')[-2:])}"))
+    
+    print('done!')
 
 def get_depth_frame(root, id):
     
@@ -231,7 +235,7 @@ def make_poses(src, dest, frames, skip_copy=False):
 
     result = np.zeros((len(frames), 17))
     for i in range(len(frames)):
-        print(f"{i}: Frame {frames[i]}")
+        # print(f"{i}: Frame {frames[i]}")
 
         # change original transformation matrix to new (down, right, backward) convention
         x = cam0_to_world_orig[i,1:].reshape([4, 4])
@@ -240,10 +244,10 @@ def make_poses(src, dest, frames, skip_copy=False):
 
         # get near and far depths for the frame
         depths = get_depth_frame(dest, frames[i])
-
+        width = float(intrinsics['S_rect_00'].split()[0])
+        height = float(intrinsics['S_rect_00'].split()[1])
         y = np.hstack((r_new.flatten(), t_new.flatten(),
-                       float(intrinsics['S_rect_00'].split()[0]),
-                       float(intrinsics['S_rect_00'].split()[1]),
+                       width, height,
                        float(intrinsics["K_00"].split()[0]),
                        np.min(depths[:,2]), np.max(depths[:,2])))
 
@@ -252,23 +256,94 @@ def make_poses(src, dest, frames, skip_copy=False):
     np.savez(gt_pose_dest, poses=result)
     np.save(poses_bounds_dest, result)
 
+    print("done!")
+    
+    return [height, width]
+
+def make_yaml(dest, args, resolution):
+    print("Making config files...", end=' ')
+
+    # create preprocess yaml
+    with open(os.path.join("configs", "preprocess.yaml"), "r") as f:
+        preprocess = yaml.safe_load(f)
+
+    path = os.path.normpath(os.path.join(dest, ".."))
+    scene = os.path.basename(os.path.normpath(dest))
+    preprocess['dataloading']['path'] = path
+    preprocess['dataloading']['scene'] = [scene]
+    preprocess['dataloading']['resize_factor'] = args.resize_factor
+
+    config_dest = os.path.join(os.getcwd(), "configs", "KITTI")
+    preprocess_yaml = os.path.join(config_dest, f"preprocess_{scene}.yaml")
+    with open(preprocess_yaml, "w") as f:
+        yaml.dump(preprocess, f)
+    
+    # create train yaml
+    with open(os.path.join("configs", "Tanks", "Ballroom.yaml"), "r") as f:
+        train = yaml.safe_load(f)
+
+    train["dataloading"]["path"] = path
+    train["dataloading"]["scene"] = [scene]
+    train["dataloading"]["customized_poses"] = args.customised_poses
+    train["dataloading"]["customized_focal"] = args.customised_focal
+    train["dataloading"]["resize_factor"] = args.resize_factor
+    train["dataloading"]["load_colmap_poses"] = not args.customised_poses
+    train["pose"]["learn_pose"] = args.learn_pose
+    train["pose"]["learn_R"] = args.learn_pose
+    train["pose"]["learn_t"] = args.learn_pose
+    train["pose"]["init_pose"] = not args.learn_pose
+    train["pose"]["init_R_only"] = False
+    train["pose"]["learn_focal"] = args.learn_focal
+    train["pose"]["update_focal"] = args.update_focal
+    train["distortion"] = dict()
+    train["distortion"]["learn_distortion"] = args.learn_distortion
+    train["training"]["out_dir"] = os.path.join("out", "kitti360", os.path.relpath(dest, "data"))
+    train["training"]["with_ssim"] = args.with_ssim
+    train["training"]["use_gt_depth"] = args.use_gt_depth
+
+    if args.match_method != 'dense':
+        print(f"Warning: {args.match_method} is not implemented")
+    train["training"]["match_method"] = args.match_method
+    train["extract_images"]["resolution"] = [x // 2 for x in resolution]
+    train["extract_images"]["eval_depth"] = True
+
+    train_yaml = os.path.join(config_dest, f"{scene}.yaml")
+    with open(train_yaml, "w") as f:
+        yaml.dump(train, f)
+
+    print(f"Wrote configs to {preprocess_yaml} and {train_yaml}")
+
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Creates directory of frames where both RGB images and pose information was available")
-    parser.add_argument("root", type=str, help="Root directory of the KITTI dataset")
-    parser.add_argument("id", type=str, help="Drive ID xxxx as it appears in 2013_05_28_xxxx_sync in the KITTI dataset")
-    parser.add_argument("dest", type=str, help="Name of the new dataset")
-    parser.add_argument("method", choices=["interval", "threshold"], action="store", help="""Keyframe selection method.
-                        'interval' to select all frames with IDs in [start, stop] over fixed intervals (default 1). 'threshold' to select frames where motion
+    setup = parser.add_argument_group("Setup")
+    setup.add_argument("root", type=str, help="Root directory of the KITTI dataset")
+    setup.add_argument("id", type=str, help="Drive ID xxxx as it appears in 2013_05_28_xxxx_sync in the KITTI dataset")
+    setup.add_argument("dest", type=str, help="Name of the new dataset")
+    setup.add_argument("--skip-copy", action="store_true", default=False, help="Skip copying data over (default: False)")
+    setup.add_argument("decoder", type=str, action="store", help="Path to folder containing run_accumulation.sh script from kitti360Scripts repository")
+    method = parser.add_argument_group("Method")
+    method.add_argument("method", choices=["interval", "threshold"], action="store", help="""Keyframe selection method.
+                        'interval' to select all frames with IDs in [start, stop] over fixed intervals. 'threshold' to select frames where motion
                         relative to the previous frame exceeds rotation or translation thresholds (defaults are None). Only frames with pose information are considered.
                         May also be combined with start, end and interval arguments.""")
-    parser.add_argument("-s", "--start", type=int, action="store", default=0, help="Frame ID to start from")
-    parser.add_argument("-e", "--end", type=int, action="store", default=None, help="Frame ID to end at")
-    parser.add_argument("-i", "--interval", type=int, action="store", default=1, help="Step between selected frames")
-    parser.add_argument("-r", type=float, action="store", dest="thresh_rot", default=None, help="Minimum rotation threshold between consecutive frames (deg). If not provided, rotation will not be considered.")
-    parser.add_argument("-t", type=float, action="store", dest="thresh_translate", default=None, help="Minimum translation threshold between consecutive frames (m). If not provided, translation will not be considered.")
-    parser.add_argument("-d", "--decode-root", type=str, action="store", default=None, help="Path to folder containing run_accumulation.sh script from kitti360Scripts repository")
-    parser.add_argument("--skip-copy", action="store_true", default=False, help="Skip copying data over")
+    method.add_argument("-s", "--start", type=int, action="store", default=0, help="Frame ID to start from (default: 0)")
+    method.add_argument("-e", "--end", type=int, action="store", default=None, help="Frame ID to end at (default: end)")
+    method.add_argument("-i", "--interval", type=int, action="store", default=1, help="Step between selected frames (default: 1)")
+    method.add_argument("-r", type=float, action="store", dest="thresh_rot", default=None, help="Minimum rotation threshold between consecutive frames (deg). If not provided, rotation will not be considered.")
+    method.add_argument("-t", type=float, action="store", dest="thresh_translate", default=None, help="Minimum translation threshold between consecutive frames (m). If not provided, translation will not be considered.")
+    config = parser.add_argument_group("Config", description="Parameters and hyperparameters for the NoPe-NeRF model. Default values are based on configs/default.yaml")
+    config.add_argument('--resize-factor', action="store", type=int, default=2, help="Factor to downscale each input image dimension (default: 2)")
+    config.add_argument("--learn-pose", action="store", type=bool, default=True, help="Enable NoPe-NeRF to optimise camera poses (default: True)")
+    config.add_argument("--learn-focal", action="store", type=bool, default=False, help="Enable NoPe-NeRF to optimise camera intrinsics (default: False)")
+    config.add_argument("--learn-distortion", action="store", type=bool, default=True, help="Enable NoPe-NeRF to optimise DPT depth frame distortion coefficients (default: True)")
+    config.add_argument("--customised-poses", action="store_true", default=False, help="Use poses other than those from COLMAP (default: False)")
+    config.add_argument("--customised-focal", action="store_true", default=False, help="Use intrinsics other than those from COLMAP (default: False)")
+    config.add_argument("--update-focal", action="store", default=True, help="Enable NoPe-NeRF to update camera intrinsics (default: True)")
+    config.add_argument("--match-method", action="store", choices=["dense", "sparse"], default="dense", help="Method to compute point cloud loss. sparse is unimplemented (default: dense)")
+    config.add_argument("--with-ssim", action="store_true", default=False, help="Use SSIM loss when computing DPT reprojection loss (default: False)")
+    config.add_argument("--use-gt-depth", action="store_true", default=False, help="Use GT depths - not implemented (default: False)")
+    
     args = parser.parse_args()
 
     # get frame IDs based on filter parameters
@@ -279,11 +354,8 @@ if __name__ == "__main__":
     out_dir = os.path.join("data", f"2013_05_28_drive_{args.id}_sync", args.dest)
     os.makedirs(out_dir, exist_ok=True)
     
-    callbacks = [make_calib, make_img, make_lidar, make_poses]
-
-    for f in callbacks:
-        if f == make_lidar:
-            f(args.root, out_dir, frames, args.decode_root, get_num_frames(args), args.skip_copy)
-        else:
-            f(args.root, out_dir, frames, args.skip_copy)
-        print('Done!')
+    make_calib(args.root, out_dir, frames, args.skip_copy)
+    make_img(args.root, out_dir, frames, args.skip_copy)
+    make_lidar(args.root, out_dir, frames, args.decoder, get_num_frames(args), args.skip_copy)
+    resolution = make_poses(args.root, out_dir, frames, args.skip_copy)
+    make_yaml(out_dir, args, resolution)
