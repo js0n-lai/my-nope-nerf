@@ -272,6 +272,8 @@ def make_yaml(dest, args, resolution):
     preprocess['dataloading']['path'] = path
     preprocess['dataloading']['scene'] = [scene]
     preprocess['dataloading']['resize_factor'] = args.resize_factor
+    preprocess['dataloading']['customized_poses'] = args.customised_poses
+    preprocess['dataloading']['load_colmap_poses'] = not args.customised_poses
 
     config_dest = os.path.join(os.getcwd(), "configs", "KITTI")
     preprocess_yaml = os.path.join(config_dest, f"preprocess_{scene}.yaml")
