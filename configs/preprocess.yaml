@@ -3,7 +3,7 @@ depth:
 dataloading:
   path: data/2013_05_28_drive_0000_sync
   scene: ['still_2']
-  resize_factor: 16
+  resize_factor:
   generate_dpt: True
 training:
   mode: 'all'

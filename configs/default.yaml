@@ -19,7 +19,7 @@ dataloading:
   with_mask: False
   spherify: True
   customized_poses: False #use poses other than colmap
-  customized_focal: True #use focal other than colmap
+  customized_focal: False #use focal other than colmap
   resize_factor:
   depth_net: dpt
   generate_dpt: False
