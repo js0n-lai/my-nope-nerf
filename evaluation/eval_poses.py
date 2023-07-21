@@ -6,6 +6,7 @@ sys.path.append(os.path.join(sys.path[0], '..'))
 from dataloading import get_dataloader, load_config
 import model as mdl
 import numpy as np
+import pdb
 
 from utils_poses.vis_cam_traj import draw_camera_frustum_geometry
 from utils_poses.align_traj import align_ate_c2b_use_a2b
@@ -29,6 +30,7 @@ out_dir = cfg['training']['out_dir']
 
 test_loader, field = get_dataloader(cfg, mode='train', shuffle=False)
 N_imgs = field['img'].N_imgs
+# pdb.set_trace()
 with torch.no_grad():
     if cfg['pose']['init_pose']:
         if cfg['pose']['init_pose_type']=='gt':
@@ -79,12 +81,13 @@ if ATE_align:  # Align learned poses to colmap poses
 
 if args.vis:
     import open3d as o3d
+    # pdb.set_trace()
     frustum_est_list = draw_camera_frustum_geometry(c2ws_est_to_draw_align2cmp.cpu().numpy(), H, W,
                                                     fx, fy,
-                                                    frustum_length, est_traj_color)
+                                                    frustum_length, est_traj_color, draw_now=True)
     frustum_colmap_list = draw_camera_frustum_geometry(gt_poses.cpu().numpy(), H, W,
                                                         fx, fy,
-                                                        frustum_length, cmp_traj_color)
+                                                        frustum_length, cmp_traj_color, draw_now=True)
 
     geometry_to_draw = []
     geometry_to_draw.append(frustum_est_list)
@@ -102,10 +105,10 @@ if args.vis:
     line_set = o3d.geometry.LineSet()
     line_set.points = o3d.utility.Vector3dVector(line_points)
     line_set.lines = o3d.utility.Vector2iVector(line_ends)
-    unit_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=2)
-    unit_sphere = o3d.geometry.LineSet.create_from_triangle_mesh(unit_sphere)
-    unit_sphere.paint_uniform_color((0, 1, 0))
-    coord = o3d.geometry.TriangleMesh.create_coordinate_frame()
+    # unit_sphere = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=2)
+    # unit_sphere = o3d.geometry.LineSet.create_from_triangle_mesh(unit_sphere)
+    # unit_sphere.paint_uniform_color((0, 1, 0))
+    # coord = o3d.geometry.TriangleMesh.create_coordinate_frame()
 
     geometry_to_draw.append(line_set)
 

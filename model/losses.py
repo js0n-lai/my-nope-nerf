@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
+import pdb
 
 class Loss_Eval(nn.Module):
     def __init__(self):
@@ -160,7 +161,6 @@ class Loss(nn.Module):
                 rgb_pc1_proj=None, valid_points=None, 
                 d1_proj=None, d2=None, d2_proj=None, d1=None, weights={}, rgb_loss_type='l2', **kwargs):
         rgb_gt = rgb_gt.cuda()
-        
         if weights['rgb_weight'] != 0.0:
             rgb_full_loss = self.get_rgb_full_loss(rgb_pred, rgb_gt, rgb_loss_type)
         else:

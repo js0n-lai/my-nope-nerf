@@ -3,6 +3,7 @@ import sys
 import logging
 import time
 import argparse
+import pdb
 
 import numpy as np
 from tqdm import tqdm
@@ -199,6 +200,7 @@ def train(cfg):
     if eval_pose_every>0:
         gt_poses = train_dataset['img'].c2ws.to(device) 
     # for epoch_it in tqdm(range(epoch_start+1, exit_after), desc='epochs'):
+    # pdb.set_trace()
     while epoch_it < (scheduling_start + scheduling_epoch):
         epoch_it +=1
         L2_loss_epoch = []

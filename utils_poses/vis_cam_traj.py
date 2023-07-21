@@ -115,13 +115,21 @@ def draw_camera_frustum_geometry(c2ws, H, W, fx=600.0, fy=600.0, frustum_length=
 
     frustum_list = []
     if coord == 'opengl':
-        for i in range(N):
+        frustum_list.append(get_camera_frustum_opengl_coord(H, W, fx, fy,
+                                                                W2C=np.linalg.inv(c2ws[0]),
+                                                                frustum_length=frustum_length,
+                                                                color=np.array([1, 0, 0])))
+        for i in range(1, N):
             frustum_list.append(get_camera_frustum_opengl_coord(H, W, fx, fy,
                                                                 W2C=np.linalg.inv(c2ws[i]),
                                                                 frustum_length=frustum_length,
                                                                 color=color[i]))
     elif coord == 'opencv':
-        for i in range(N):
+        frustum_list.append(get_camera_frustum_opengl_coord(H, W, fx, fy,
+                                                                W2C=np.linalg.inv(c2ws[0]),
+                                                                frustum_length=frustum_length,
+                                                                color=np.array([1, 0, 0])))
+        for i in range(1, N):
             frustum_list.append(get_camera_frustum_opencv_coord(H, W, fx, fy,
                                                                 W2C=np.linalg.inv(c2ws[i]),
                                                                 frustum_length=frustum_length,
@@ -133,6 +141,12 @@ def draw_camera_frustum_geometry(c2ws, H, W, fx=600.0, fy=600.0, frustum_length=
     frustums_geometry = frustums2lineset(frustum_list)
 
     if draw_now:
-        o3d.visualization.draw_geometries([frustums_geometry])
+        viewer = o3d.visualization.Visualizer()
+        viewer.create_window()
+        viewer.add_geometry(frustums_geometry)
+        opt = viewer.get_render_option()
+        opt.show_coordinate_frame = True
+        # o3d.visualization.draw_geometries([frustums_geometry], )
+        viewer.run()
 
     return frustums_geometry  # this is an o3d geometry object.
