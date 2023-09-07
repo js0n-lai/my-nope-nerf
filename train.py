@@ -13,9 +13,9 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 import dataloading as dl
 import model as mdl
-from utils_poses.comp_ate import compute_ATE, compute_rpe
+from utils_poses.comp_ate import compute_ATE, compute_rpe, compute_ATE_v2
 from model.common import backup,  mse2psnr
-from utils_poses.align_traj import align_ate_c2b_use_a2b
+from utils_poses.align_traj import align_ate_c2b_use_a2b, align_ate_init_pose
 def train(cfg):
     logger_py = logging.getLogger(__name__)
 
@@ -198,10 +198,11 @@ def train(cfg):
     shift_dict = {}
     # load gt poses for evaluation
     if eval_pose_every>0:
-        gt_poses = train_dataset['img'].c2ws.to(device) 
+        gt_poses = train_dataset['img'].c2ws_gt_llff.to(device) 
     # for epoch_it in tqdm(range(epoch_start+1, exit_after), desc='epochs'):
     # pdb.set_trace()
     while epoch_it < (scheduling_start + scheduling_epoch):
+        print(f"{epoch_it} {scheduling_start} {scheduling_epoch}")
         epoch_it +=1
         L2_loss_epoch = []
         pc_loss_epoch = []
@@ -279,12 +280,15 @@ def train(cfg):
         if (eval_pose_every>0 and (epoch_it % eval_pose_every) == 0):
             with torch.no_grad():
                 learned_poses = torch.stack([pose_param_net(i) for i in range(n_views)])
-            c2ws_est_aligned = align_ate_c2b_use_a2b(learned_poses, gt_poses)
+            c2ws_est_aligned = align_ate_init_pose(learned_poses, gt_poses)
             ate = compute_ATE(gt_poses.cpu().numpy(), c2ws_est_aligned.cpu().numpy())
+            ate_t, ate_r = compute_ATE_v2(gt_poses.cpu().numpy(), c2ws_est_aligned.cpu().numpy())
             rpe_trans, rpe_rot = compute_rpe(gt_poses.cpu().numpy(), c2ws_est_aligned.cpu().numpy())
-            tqdm.write('{0:6d} ep: Train: ATE: {1:.3f} RPE_r: {2:.3f}'.format(epoch_it, ate, rpe_rot* 180 / np.pi))
+            tqdm.write('{0:6d} ep: Train: ATE_t v1: {1:.3f}, ATE_t v2: {2:.3f}, ATE_r v2: {3:.3f} RPE_r: {2:.3f}'.format(epoch_it, ate, ate_t, ate_r * 180 / np.pi, rpe_rot* 180 / np.pi))
             eval_dict = {
                 'ate_trans': ate,
+                'ate_t_v2': ate_t,
+                'ate_r_v2': ate_r,
                 'rpe_trans': rpe_trans*100,
                 'rpe_rot': rpe_rot* 180 / np.pi
             }

@@ -50,33 +50,28 @@ class Renderer(nn.Module):
         depth_range = torch.tensor(self.depth_range)
         n_max_network_queries = self.n_max_network_queries
 
-        # Find surface points in world coorinate
-        camera_world = origin_to_world(
-                n_points, camera_mat, world_mat, scale_mat
-            )
+        # Find surface points in world coordinate
+        camera_world = origin_to_world(n_points, camera_mat, world_mat, scale_mat)
         points_world = transform_to_world(pixels, depth, camera_mat, world_mat, scale_mat)
         
-
-        d_i_gt = torch.norm(points_world - camera_world, p=2, dim=-1)
+        d_i_src = torch.norm(points_world - camera_world, p=2, dim=-1)
         
         # Prepare camera projection
-        pixels_world = image_points_to_world(
-            pixels, camera_mat, world_mat,scale_mat
-        )
+        pixels_world = image_points_to_world(pixels, camera_mat, world_mat,scale_mat)
         ray_vector = (pixels_world - camera_world)
         ray_vector_norm = ray_vector.norm(2,2)
         if normalise_ray:
             ray_vector = ray_vector/ray_vector.norm(2,2).unsqueeze(-1) # normalised ray vector
         else:
-            d_i_gt = d_i_gt / ray_vector_norm # used for guide sampling, convert dist to depth
+            d_i_src = d_i_src / ray_vector_norm # used for guide sampling, convert dist to depth
         
-        d_i = d_i_gt.clone()
+        d_i = d_i_src.clone()
         # Get mask for where first evaluation point is occupied
         mask_zero_occupied = d_i == 0
 
         # Get mask for predicted depth
         mask_pred = get_mask(d_i)
-        
+
         # with torch.no_grad():
         dists = torch.ones_like(d_i).to(device)
         dists[mask_pred] = d_i[mask_pred]
@@ -86,7 +81,7 @@ class Renderer(nn.Module):
         network_object_mask = network_object_mask[0]
         dists = dists[0]
 
-        # Project depth to 3d poinsts
+        # Project depth to 3d points
         camera_world = camera_world.reshape(-1, 3)
         ray_vector = ray_vector.reshape(-1, 3)
        
@@ -146,22 +141,27 @@ class Renderer(nn.Module):
             acc_map = torch.sum(weights, -1)
             rgb_values = rgb_values + (1. - acc_map.unsqueeze(-1))
 
-        d_i_gt =  d_i_gt[0] 
+        d_i_src =  d_i_src[0] 
         if eval_ and normalise_ray:
             # print('-------normalising depth-------')
             dist_pred = dist_pred / ray_vector_norm[0] # change dist to depth, consistent with gt depth for evaluation
             dists = dists / ray_vector_norm[0]
-            d_i_gt = d_i_gt / ray_vector_norm[0]
+            d_i_src = d_i_src / ray_vector_norm[0]
+        
         dist_rendered_masked = dist_pred[network_object_mask]
-        dist_dpt_masked = d_i_gt[network_object_mask]
+        dist_gt_masked = d_i_src[network_object_mask]
+
+        mask_depth = (depth.squeeze()[network_object_mask] >= self.depth_range[0]) & (depth.squeeze()[network_object_mask] <= self.depth_range[1])
+        # dist_gt_masked[~mask_depth] = -1 # set to nonsense value for marker in depth loss
+
         if sample_option=='ndc':
-            dist_dpt_masked = 1 - 1/dist_dpt_masked
+            dist_gt_masked = 1 - 1/dist_gt_masked
         out_dict = {
             'rgb': rgb_values.reshape(batch_size, -1, 3),
             'z_vals': z_val.squeeze(-1),
             'normal': diff_norm,
             'depth_pred': dist_rendered_masked, # for loss
-            'depth_gt': dist_dpt_masked,  # for loss
+            'depth_gt': dist_gt_masked,  # for loss
             'alpha': alpha
         }
         return out_dict

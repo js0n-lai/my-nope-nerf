@@ -28,6 +28,7 @@ dataloading:
   load_colmap_poses: True
   shuffle: True
   sample_rate: 8
+  bd_factor: 0.75
 
 rendering:
   type: nope_nerf # changed
@@ -99,6 +100,7 @@ training:
   pc_weight: [1.0, 0.0]
   rgb_s_weight: [1.0, 0.0]
   depth_consistency_weight: [0.0, 0.0]
+  t_cycle_weight: [0.0, 0.0]
   rgb_loss_type: l1
   depth_loss_type: l1
   log_scale_shift_per_view: False

@@ -1,6 +1,7 @@
 # This file is modified from NeRF++: https://github.com/Kai-46/nerfplusplus
 
 import numpy as np
+import pdb
 
 try:
     import open3d as o3d
@@ -46,7 +47,7 @@ def get_camera_frustum_opengl_coord(H, W, fx, fy, W2C, frustum_length=0.5, color
 
     # build view frustum in camera space in homogenous coordinate (5, 4)
     frustum_points = np.array([[0., 0., 0., 1.0],                          # frustum origin
-                               [-half_w, half_h,  -frustum_length, 1.0],   # top-left image corner
+                               [-2*half_w, half_h,  -frustum_length, 1.0],   # top-left image corner
                                [half_w, half_h,   -frustum_length, 1.0],   # top-right image corner
                                [half_w, -half_h,  -frustum_length, 1.0],   # bottom-right image corner
                                [-half_w, -half_h, -frustum_length, 1.0]])  # bottom-left image corner
@@ -78,7 +79,7 @@ def get_camera_frustum_opencv_coord(H, W, fx, fy, W2C, frustum_length=0.5, color
 
     # build view frustum in camera space in homogenous coordinate (5, 4)
     frustum_points = np.array([[0., 0., 0., 1.0],                          # frustum origin
-                               [-half_w, -half_h, frustum_length, 1.0],   # top-left image corner
+                               [-2*half_w, -half_h, frustum_length, 1.0],   # top-left image corner
                                [ half_w, -half_h, frustum_length, 1.0],   # top-right image corner
                                [ half_w,  half_h, frustum_length, 1.0],   # bottom-right image corner
                                [-half_w, +half_h, frustum_length, 1.0]])  # bottom-left image corner
@@ -118,17 +119,17 @@ def draw_camera_frustum_geometry(c2ws, H, W, fx=600.0, fy=600.0, frustum_length=
         frustum_list.append(get_camera_frustum_opengl_coord(H, W, fx, fy,
                                                                 W2C=np.linalg.inv(c2ws[0]),
                                                                 frustum_length=frustum_length,
-                                                                color=np.array([1, 0, 0])))
+                                                                color=np.array([1, 0, 1])))
         for i in range(1, N):
             frustum_list.append(get_camera_frustum_opengl_coord(H, W, fx, fy,
                                                                 W2C=np.linalg.inv(c2ws[i]),
                                                                 frustum_length=frustum_length,
                                                                 color=color[i]))
     elif coord == 'opencv':
-        frustum_list.append(get_camera_frustum_opengl_coord(H, W, fx, fy,
+        frustum_list.append(get_camera_frustum_opencv_coord(H, W, fx, fy,
                                                                 W2C=np.linalg.inv(c2ws[0]),
                                                                 frustum_length=frustum_length,
-                                                                color=np.array([1, 0, 0])))
+                                                                color=np.array([1, 0, 1])))
         for i in range(1, N):
             frustum_list.append(get_camera_frustum_opencv_coord(H, W, fx, fy,
                                                                 W2C=np.linalg.inv(c2ws[i]),
@@ -150,3 +151,23 @@ def draw_camera_frustum_geometry(c2ws, H, W, fx=600.0, fy=600.0, frustum_length=
         viewer.run()
 
     return frustums_geometry  # this is an o3d geometry object.
+
+
+def draw_camera_trajectory(c2ws, color=np.array([29.0, 53.0, 87.0])/255.0):
+    points = []
+    lines = []
+
+    for i in range(1, len(c2ws)):
+        # pdb.set_trace()
+        point = np.matmul(c2ws[i-1], np.array([0., 0., 0., 1.]).T).T
+        point = point[:3] / point[3]
+        line = [i-1, i]
+        points.append(point)
+        lines.append(line)
+    
+    # last point
+    point = np.matmul(c2ws[-1], np.array([0., 0., 0., 1.]).T).T
+    point = point[:3] / point[3]
+    points.append(point)
+
+    return points, lines, [color for i in range(len(lines))]

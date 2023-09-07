@@ -4,6 +4,7 @@ from PIL import Image
 import numpy as np
 import imageio
 import cv2
+from utils_poses.vis_cam_traj import draw_camera_frustum_geometry
 
 def _minify(basedir, factors=[], resolutions=[], img_folder='images'):
     needtoload = False
@@ -56,8 +57,36 @@ def _minify(basedir, factors=[], resolutions=[], img_folder='images'):
             print('Removed duplicates')
         print('Done')
             
-def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, crop_size=0, load_colmap_poses=True):
-    if load_colmap_poses:
+def vis_poses(poses, desc, size=0.1):
+    print(desc)
+    y = np.zeros((poses.shape[0], 4, 4))
+    for i in range(poses.shape[0]):
+        # y[i] = np.array([[, 0, 0, 0],
+        #                  [0, -1, 0, 0],
+        #                  [0, 0, 1, 0],
+        #                  [0, 0, 0, 1]], dtype=np.float32)
+        rt = poses[i]
+        rt = rt[:,:-1]
+        rt = np.vstack((rt, np.array([0, 0, 0, 1])))
+        y[i] = rt
+    
+    # V-KITTI
+    # draw_camera_frustum_geometry(y, 188, 621, 725, 725, size, np.array([39, 125, 161], dtype=np.float32)/255, coord='opengl',draw_now=True)
+
+    # KITTI-360
+    draw_camera_frustum_geometry(y, 376, 1408, 788.62933, 788.62933, size, np.array([39, 125, 161], dtype=np.float32)/255, coord='opengl',draw_now=True)
+
+    # Ballroom
+    # draw_camera_frustum_geometry(y, 540, 960, 582.94293, 582.94293, size, np.array([39, 125, 161], dtype=np.float32)/255, coord='opengl',draw_now=True)
+
+def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, crop_size=0, load_colmap_poses=True, load_gt_llff=False):
+    # import pdb
+    # pdb.set_trace()
+    if load_gt_llff:
+        poses_arr = np.load(os.path.join(basedir, 'poses_gt.npy'))
+        poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0]) # 3 x 5 x N
+        bds = poses_arr[:, -2:].transpose([1,0])
+    elif load_colmap_poses:
         poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
         poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0]) # 3 x 5 x N
         bds = poses_arr[:, -2:].transpose([1,0])
@@ -83,8 +112,6 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, cr
         crop_ratio = crop_size_H / H
         print('=======images cropped=======')
         focal_crop_factor = (H - 2*crop_size_H) / H
-            
-
 
     img0 = [os.path.join(basedir, img_folder, f) for f in sorted(os.listdir(os.path.join(basedir, img_folder))) \
             if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
@@ -116,11 +143,10 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, cr
     
     imgfiles = [os.path.join(imgdir, f) for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
     sh = imageio.imread(imgfiles[0]).shape
-    if load_colmap_poses:
+    if load_colmap_poses or load_gt_llff:
         if poses.shape[-1] != len(imgfiles):
             print( 'Mismatch between imgs {} and poses {} !!!!'.format(len(imgfiles), poses.shape[-1]) )
             return
-    
         poses[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])
         poses[2, 4, :] = poses[2, 4, :] * 1./factor 
     
@@ -137,7 +163,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, cr
     imgs = imgs = [imread(f)[...,:3]/255. for f in imgfiles]
     imgs = np.stack(imgs, -1)  
 
-    if load_colmap_poses:
+    if load_gt_llff or load_colmap_poses:
         print('Loaded image data', imgs.shape, poses[:,-1,0])
     else:
         print('Loaded image data', imgs.shape)
@@ -146,6 +172,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True, cr
     # added
     imgnames = [f for f in sorted(os.listdir(imgdir)) if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')]
     return poses, bds, imgs, imgnames, crop_ratio, focal_crop_factor
+
 def recenter_poses(poses):
 
     poses_ = poses+0
@@ -158,9 +185,8 @@ def recenter_poses(poses):
     poses = np.linalg.inv(c2w) @ poses
     poses_[:,:3,:4] = poses[:,:3,:4]
     poses = poses_
-    return poses
+    return poses, c2w
 def poses_avg(poses):
-
     hwf = poses[0, :3, -1:]
 
     center = poses[:, :3, 3].mean(0)
@@ -179,6 +205,7 @@ def viewmatrix(z, up, pos):
     vec1 = normalize(np.cross(vec2, vec0))
     m = np.stack([vec0, vec1, vec2, pos], 1)
     return m
+
 def spherify_poses(poses, bds):
     
     p34_to_44 = lambda p : np.concatenate([p, np.tile(np.reshape(np.eye(4)[-1,:], [1,1,4]), [p.shape[0], 1,1])], 1)
@@ -203,7 +230,8 @@ def spherify_poses(poses, bds):
     pos = center
     c2w = np.stack([vec1, vec2, vec0, pos], 1)
 
-    poses_reset = np.linalg.inv(p34_to_44(c2w[None])) @ p34_to_44(poses[:,:3,:4])
+    c2w_44 = p34_to_44(c2w[None])
+    poses_reset = np.linalg.inv(c2w_44) @ p34_to_44(poses[:,:3,:4])
 
     rad = np.sqrt(np.mean(np.sum(np.square(poses_reset[:,:3,3]), -1)))
     
@@ -235,16 +263,23 @@ def spherify_poses(poses, bds):
     new_poses = np.concatenate([new_poses, np.broadcast_to(poses[0,:3,-1:], new_poses[:,:3,-1:].shape)], -1)
     poses_reset = np.concatenate([poses_reset[:,:3,:4], np.broadcast_to(poses[0,:3,-1:], poses_reset[:,:3,-1:].shape)], -1)
     
-    return poses_reset, new_poses, bds
+    return poses_reset, new_poses, bds, sc, c2w_44
 
-
-def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1):
+def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1, reverse=None):
     depths = []
     for image_name in image_list:
         frame_id = image_name.split('.')[0]
         depth_path = os.path.join(datadir, 'depth', '{}.png'.format(frame_id))
-        depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-        depth = depth.astype(np.float32) / 1000
+        depth = cv2.imread(depth_path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
+        depth = depth.astype(np.float32) / 100 # V-KITTI stores depth pixel values in cm
+
+        # rescale according to preprocessing
+        if reverse is not None:
+            depth *= reverse['sc']
+            if reverse.get('sc_spherify') is not None:
+                depth *= reverse['sc_spherify']
+
+        # depth = depth.astype(np.float32) / 1000
         if crop_ratio != 1:
             h, w = depth.shape
             crop_size_h = int(h*crop_ratio)
@@ -253,7 +288,7 @@ def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1):
         
         if H is not None:
             # mask = (depth > 0).astype(np.uint8)
-            depth_resize = cv2.resize(depth, (W, H), interpolation=cv2.INTER_NEAREST)
+            depth_resize = cv2.resize(depth, (W, H), interpolation=cv2.INTER_AREA)
             # mask_resize = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
             depths.append(depth_resize)
             # masks.append(mask_resize > 0.5)
@@ -261,9 +296,9 @@ def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1):
             depths.append(depth)
             # masks.append(depth > 0)
     return np.stack(depths)
+
 def load_depths(image_list, datadir, H=None, W=None):
     depths = []
-
     for image_name in image_list:
         frame_id = image_name.split('.')[0]
         depth_path = os.path.join(datadir, '{}_depth.npy'.format(frame_id))
@@ -277,6 +312,7 @@ def load_depths(image_list, datadir, H=None, W=None):
         else:
             depths.append(depth)
     return np.stack(depths)
+
 def load_images(image_list, datadir):
     images = []
 
@@ -286,9 +322,9 @@ def load_images(image_list, datadir):
         im = np.load(im_path)
         images.append(im)
     return np.stack(images)
+
 def load_depths_npz(image_list, datadir, H=None, W=None, norm=False):
     depths = []
-
     for image_name in image_list:
         frame_id = image_name.split('.')[0]
         depth_path = os.path.join(datadir, 'depth_{}.npz'.format(frame_id))

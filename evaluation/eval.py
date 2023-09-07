@@ -19,6 +19,7 @@ from utils_poses.align_traj import align_scale_c2b_use_a2b, align_ate_c2b_use_a2
 from tqdm import tqdm
 from model.common import mse2psnr
 from torch.utils.tensorboard import SummaryWriter
+import pdb
 
 def eval(cfg):
     torch.manual_seed(0)
@@ -118,6 +119,7 @@ def eval(cfg):
             eval_pose_cfg = cfg['eval_pose']
             trainer = mdl.Trainer_pose(nope_nerf, eval_pose_cfg, device=device, optimizer_pose=optimizer_eval_pose, 
                                     pose_param_net=eval_pose_param_net, focal_net=focal_net)
+            # for epoch_i in range(0):
             for epoch_i in tqdm(range(num_epoch), desc='optimising eval'):
                 L2_loss_epoch = []
                 psnr_epoch = []
@@ -165,7 +167,7 @@ def eval(cfg):
         eval_psnr_list.append(out['psnr'])
         eval_ssim_list.append(out['ssim'])
         eval_lpips_list.append(out['lpips'])
-        depth_preds.append(out['depth_pred'])
+        depth_preds.append(out['depth_pred'].astype(np.float32))
         depth_gts.append(out['depth_gt'])
 
     mean_mse = np.mean(eval_mse_list)
@@ -182,11 +184,20 @@ def eval(cfg):
         depth_errors = []
         ratio = np.median(np.concatenate(depth_gts)) / \
                         np.median(np.concatenate(depth_preds))
+        
+        if 'reverse_gt' in dir(train_dataset['img']):
+            ratio_actual = train_dataset['img'].reverse_gt['sc']
+            sc_spherify = train_dataset['img'].reverse_gt.get('sc_spherify', 1)
+            ratio_actual *= sc_spherify
+
+        print(f"Scaled by {ratio}, actual = {1 / ratio_actual}")
+        # pdb.set_trace()
         for i in range(len(depth_preds)):
             gt_depth = depth_gts[i]
             pred_depth = depth_preds[i]
 
-            pred_depth *= ratio
+            pred_depth = pred_depth * ratio
+            # pred_depth = pred_depth / ratio_actual
             pred_depth[pred_depth < min_depth] = min_depth
             pred_depth[pred_depth > max_depth] = max_depth
 

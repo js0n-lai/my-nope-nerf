@@ -8,7 +8,7 @@ import numpy as np
 import imageio
 import cv2
 import pdb
-from dataloading.common import _load_data, recenter_poses, spherify_poses, load_depths_npz, load_gt_depths
+from dataloading.common import _load_data, recenter_poses, spherify_poses, load_depths_npz, load_gt_depths, vis_poses
 logger = logging.getLogger(__name__)
 
 class DataField(object):
@@ -19,7 +19,7 @@ class DataField(object):
                  use_DPT=False, scene_name=[' '], mode='train', spherify=False, 
                  load_ref_img=False,customized_poses=False,
                  customized_focal=False,resize_factor=2, depth_net='dpt',crop_size=0, 
-                 random_ref=False,norm_depth=False,load_colmap_poses=True, sample_rate=8, **kwargs):
+                 random_ref=False,norm_depth=False,load_colmap_poses=True, sample_rate=8, bd_factor=0.75, **kwargs):
         """load images, depth maps, etc.
         Args:
             model_path (str): path of dataset
@@ -53,34 +53,48 @@ class DataField(object):
         load_dir = os.path.join(model_path, scene_name[0])
         if crop_size!=0:
             depth_net = depth_net + '_' + str(crop_size)
-        poses, bds, imgs, img_names, crop_ratio, focal_crop_factor = _load_data(load_dir, factor=resize_factor, crop_size=crop_size, load_colmap_poses=load_colmap_poses)
+        poses, bds, imgs, img_names, crop_ratio, focal_crop_factor = _load_data(load_dir, factor=resize_factor, crop_size=crop_size, load_colmap_poses=load_colmap_poses, load_gt_llff=False)
         if load_colmap_poses:
-            poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
-            poses = np.moveaxis(poses, -1, 0).astype(np.float32)
-            bds = np.moveaxis(bds, -1, 0).astype(np.float32)
-            bd_factor = 0.75
-            # Rescale if bd_factor is provided
-            sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
-            poses[:,:3,3] *= sc
-            bds *= sc
-            poses = recenter_poses(poses)
-            if spherify:
-                poses, render_poses, bds = spherify_poses(poses, bds)
-            input_poses = poses.astype(np.float32)
-            hwf = input_poses[0,:3,-1]
-            self.hwf = input_poses[:,:3,:]
-            input_poses = input_poses[:,:3,:4]
-            H, W, focal = hwf
-            H, W = int(H), int(W)
-            poses_tensor = torch.from_numpy(input_poses)
-            bottom = torch.FloatTensor([0, 0, 0, 1]).unsqueeze(0)
-            bottom = bottom.repeat(poses_tensor.shape[0], 1, 1)
-            c2ws_colmap = torch.cat([poses_tensor, bottom], 1)
+            c2ws_colmap, H, W, focal, reverse_init = self.make_c2ws_from_llff(poses, bds, spherify, True, False, bd_factor)
+            self.reverse_init = reverse_init
+            # # pdb.set_trace()
+            # # vis_poses(poses.transpose([2, 0, 1]), 'just loaded', 1)
+
+            # poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
+            # # vis_poses(poses.transpose([2, 0, 1]), 'transform from (x,y,z) --> (y, -x, z)', 1)
+
+            # poses = np.moveaxis(poses, -1, 0).astype(np.float32)
+            # # vis_poses(poses, 'move axis', 1)
+
+            # bds = np.moveaxis(bds, -1, 0).astype(np.float32)
+            # bd_factor = 0.75
+            # # Rescale if bd_factor is provided
+            # sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
+            # poses[:,:3,3] *= sc
+            # # vis_poses(poses, f'rescaled t by {sc}', 1)
+
+            # bds *= sc
+            # poses = recenter_poses(poses)
+            # # vis_poses(poses, 'recentered', 1)
+
+            # if spherify:
+            #     poses, render_poses, bds = spherify_poses(poses, bds)
+            #     # vis_poses(poses, 'spherify')
+            # input_poses = poses.astype(np.float32)
+            # hwf = input_poses[0,:3,-1]
+            # self.hwf = input_poses[:,:3,:]
+            # input_poses = input_poses[:,:3,:4]
+            # H, W, focal = hwf
+            # H, W = int(H), int(W)
+            # pdb.set_trace()
+            # poses_tensor = torch.from_numpy(input_poses)
+            # bottom = torch.FloatTensor([0, 0, 0, 1]).unsqueeze(0)
+            # bottom = bottom.repeat(poses_tensor.shape[0], 1, 1)
+            # c2ws_colmap = torch.cat([poses_tensor, bottom], 1)
 
         imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
         imgs = np.transpose(imgs, (0, 3, 1, 2))
         _, _, h, w = imgs.shape
-
         if customized_focal:
             print(os.path.join(load_dir, 'intrinsics.npz'))
             focal_gt = np.load(os.path.join(load_dir, 'intrinsics.npz'))['K'].astype(np.float32)
@@ -111,18 +125,45 @@ class DataField(object):
         image_list_train = [img_names[i] for i in i_train]
         image_list_test = [img_names[i] for i in i_test]
         print('test set: ', image_list_test)
+        # pdb.set_trace()
 
         if customized_poses:
             c2ws_gt = np.load(os.path.join(load_dir, 'gt_poses.npz'))['poses'].astype(np.float32)
-            T = torch.tensor(np.array([[1, 0, 0, 0],[0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)) # ScanNet coordinate
+            # T = torch.tensor(np.array([[1, 0, 0, 0],[0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)) # ScanNet coordinate
             c2ws_gt = torch.from_numpy(c2ws_gt)
-            c2ws = c2ws_gt @ T
+            c2ws = c2ws_gt
+            # c2ws = c2ws_gt @ T
         else:
             if load_colmap_poses:
                 c2ws = c2ws_colmap
             else:
                 c2ws = None
         
+        # load preprocessed KITTI GT poses in LLFF format
+        poses_gt, bds_gt, *other = _load_data(load_dir, factor=resize_factor, crop_size=crop_size, load_colmap_poses=False, load_gt_llff=True)
+        c2ws_gt_llff, H_gt, W_gt, focal_gt, reverse_gt = self.make_c2ws_from_llff(poses_gt, bds_gt, spherify, False, False, bd_factor)
+        self.c2ws_gt_llff = c2ws_gt_llff
+        self.reverse_gt = reverse_gt
+        # pdb.set_trace()
+
+        # if c2ws is not None:
+        #     import open3d as o3d
+        #     from utils_poses.vis_cam_traj import draw_camera_frustum_geometry
+        #     init = draw_camera_frustum_geometry(c2ws_colmap.cpu().numpy(), H, W, fx, fy, 0.1, np.array([29, 215, 158], dtype=np.float32) / 255, coord='opengl')
+        #     gt = draw_camera_frustum_geometry(c2ws_gt_llff.cpu().numpy(), H, W, fx, fy, 0.1, np.array([255, 0, 0], dtype=np.float32) / 255, coord='opengl')
+        #     viewer = o3d.visualization.Visualizer()
+        #     viewer.create_window()
+        #     viewer.add_geometry(init)
+        #     viewer.add_geometry(gt)
+        #     opt = viewer.get_render_option()
+        #     opt.show_coordinate_frame = True
+
+        #     viewer.run()
+        #     exit()
+
+        # from utils_poses.vis_cam_traj import draw_camera_frustum_geometry
+        # draw_camera_frustum_geometry(self.c2ws_gt_llff.cpu().numpy(), H_gt, W_gt, fx_gt, fy_gt, 0.1, np.array([39, 125, 161], dtype=np.float32) / 255, coord='opengl',draw_now=True)
+        # exit()
         
         self.N_imgs_train = len(i_train)
         self.N_imgs_test = len(i_test)
@@ -141,16 +182,79 @@ class DataField(object):
 
         self.imgs = imgs[idx_list]
         self.N_imgs = len(idx_list)
+        self.c2ws_gt_llff = self.c2ws_gt_llff[idx_list]
         if c2ws is not None:
             self.c2ws = c2ws[idx_list]
         if load_colmap_poses:
             self.c2ws_colmap = c2ws_colmap[i_train]
-        if not use_DPT:
-            self.dpt_depth = load_depths_npz(image_list_train, pred_depth_path, norm=norm_depth)
-        if with_depth:
-            self.depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio)
         
+        try:
+            # self.gt_depth = load_gt_depths(img_names, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
+            self.gt_depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
+        except AttributeError:
+            self.gt_depth = None
 
+        # breakpoint()
+        # self.gt_depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio)
+        if not use_DPT and not with_depth:
+            self.dpt_depth = load_depths_npz(image_list_train, pred_depth_path, norm=norm_depth)
+        elif with_depth:
+            self.depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1], reverse=reverse_gt)
+            # self.depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio)
+ 
+    def make_c2ws_from_llff(self, poses, bds, spherify, overwrite_hwf=False, visualise=False, bd_factor=0.75):
+        # pdb.set_trace()
+        if visualise:
+            vis_poses(poses.transpose([2, 0, 1]), 'just loaded', 1)
+
+        poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
+        if visualise:
+            vis_poses(poses.transpose([2, 0, 1]), 'transform from (x,y,z) --> (y, -x, z)', 1)
+
+        poses = np.moveaxis(poses, -1, 0).astype(np.float32)
+        if visualise:
+            vis_poses(poses, 'move axis', 1)
+
+        bds = np.moveaxis(bds, -1, 0).astype(np.float32)
+        # bd_factor = 0.75
+        # bd_factor = None
+
+        # Rescale if bd_factor is provided
+        sc = 1. if bd_factor == 'None' else 1./(bds.min() * bd_factor)
+        poses[:,:3,3] *= sc
+        if visualise:
+            vis_poses(poses, f'rescaled t by {sc}', 1)
+
+        bds *= sc
+        poses, poses_avg = recenter_poses(poses)
+        if visualise:
+            vis_poses(poses, 'recentered', 1)
+        # breakpoint()
+
+        reverse = dict()
+        reverse['sc'] = sc
+        reverse['recenter'] = poses_avg
+
+        if spherify:
+            poses, render_poses, bds, sc_spherify, c2w_spherify = spherify_poses(poses, bds)
+            reverse['sc_spherify'] = sc_spherify
+            reverse['c2w_spherify'] = c2w_spherify
+            if visualise:
+                vis_poses(poses, 'spherify')
+            
+        input_poses = poses.astype(np.float32)
+        hwf = input_poses[0,:3,-1]
+        if overwrite_hwf:
+            self.hwf = input_poses[:,:3,:]
+        input_poses = input_poses[:,:3,:4]
+        H, W, focal = hwf
+        H, W = int(H), int(W)
+        poses_tensor = torch.from_numpy(input_poses)
+        bottom = torch.FloatTensor([0, 0, 0, 1]).unsqueeze(0)
+        bottom = bottom.repeat(poses_tensor.shape[0], 1, 1)
+        c2ws = torch.cat([poses_tensor, bottom], 1)
+
+        return c2ws, H, W, focal, reverse
        
 
     def load(self, input_idx_img=None):
@@ -166,6 +270,7 @@ class DataField(object):
             data_in = self.transform(data_in)
             data['normalised_img'] = data_in['image']
         data['idx'] = idx
+
     def load_ref_img(self, idx, data={}):
         if self.random_ref:
             if idx==self.N_imgs-1:
@@ -174,23 +279,35 @@ class DataField(object):
                 ran_idx = random.randint(1, min(self.random_ref, self.N_imgs-idx-1))
                 ref_idx = idx + ran_idx
         image = self.imgs[ref_idx]
+
+        # store depths
+        if self.gt_depth is not None:
+            gt_depth = self.gt_depth[ref_idx]
+            data['gt_depths'] = gt_depth
         if self.dpt_depth is not None:
             dpt = self.dpt_depth[ref_idx]
             data['ref_dpts'] = dpt
+        elif self.with_depth:
+            depth = self.depth[ref_idx]
+            data['ref_depths'] = depth
+        
         if self.use_DPT:
             data_in = {"image": np.transpose(image, (1, 2, 0))}
             data_in = self.transform(data_in)
             normalised_ref_img = data_in['image']
             data['normalised_ref_img'] = normalised_ref_img
-        if self.with_depth:
-            depth = self.depth[ref_idx]
-            data['ref_depths'] = depth
+        
         data['ref_imgs'] = image
         data['ref_idxs'] = ref_idx
+
+        # store gt pose
+        data['ref_pose_gt'] = self.c2ws_gt_llff[ref_idx]
+
 
     def load_depth(self, idx, data={}):
         depth = self.depth[idx]
         data['depth'] = depth
+    
     def load_DPT_depth(self, idx, data={}):
         depth_dpt = self.dpt_depth[idx]
         data['dpt'] = depth_dpt
@@ -200,7 +317,8 @@ class DataField(object):
         data['scale_mat'] = np.array([[1, 0, 0, 0], [0, 1, 0, 0],[0, 0, 1, 0],[0, 0, 0, 1]]).astype(np.float32)
         data['idx'] = idx
     
-   
+    def load_gt_pose(self, idx, data={}):
+        data['pose_gt'] = self.c2ws_gt_llff[idx]
         
     def load_field(self, input_idx_img=None):
         if input_idx_img is not None:
@@ -211,11 +329,12 @@ class DataField(object):
         data = {}
         if not self.mode =='render':
             self.load_image(idx_img, data)
+            self.load_gt_pose(idx_img, data)
             if self.ref_img:
                 self.load_ref_img(idx_img, data)
             if self.with_depth:
                 self.load_depth(idx_img, data)
-            if self.dpt_depth is not None:
+            elif self.dpt_depth is not None:
                 self.load_DPT_depth(idx_img, data)
         if self.with_camera:
             self.load_camera(idx_img, data)

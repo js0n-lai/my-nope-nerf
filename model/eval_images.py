@@ -36,19 +36,25 @@ class Eval_Images(object):
         img = data.get('img').to(device)
         batch_size, _, h, w = img.shape
         depth_img = data.get('img.depth', torch.ones(batch_size, h, w))
+        depth_gt = data.get('img.gt_depths')
         img_idx = data.get('img.idx')
         camera_mat = data.get('img.camera_mat').to(device)
         scale_mat = data.get('img.scale_mat').to(device)
 
-        return (img, depth_img,  camera_mat, scale_mat, img_idx)
+        return (img, depth_img,  camera_mat, scale_mat, img_idx, depth_gt)
 
     def eval_images(self, data, render_dir, fxfy, lpips_vgg_fn, logger, min_depth=0.1, max_depth=20, it=0):
         self.renderer.eval()
-        (img_gt, depth_gt, camera_mat, scale_mat, img_idx) = self.process_data_dict(data)
+        (img_gt, depth, camera_mat, scale_mat, img_idx, depth_gt) = self.process_data_dict(data)
         img_idx = int(img_idx)
         img_gt = img_gt.squeeze(0).permute(1, 2, 0)
-        
-        depth_gt = depth_gt.squeeze(0).numpy()
+
+        if depth_gt is not None: 
+            depth_gt = depth_gt.squeeze(0).numpy()
+        else:
+            print('No GT depths available, using DPT')
+            depth_gt = depth.squeeze(0).numpy()
+        # breakpoint()
         mask = (depth_gt > min_depth) * (depth_gt < max_depth)
 
         if self.use_learnt_poses:
@@ -88,6 +94,8 @@ class Eval_Images(object):
             
 
         # mse for the entire image
+        # import pdb
+        # pdb.set_trace()
         mse = F.mse_loss(img_out, img_gt).item()
         psnr = mse2psnr(mse)
         ssim = pytorch_ssim.ssim(img_out.permute(2, 0, 1).unsqueeze(0), img_gt.permute(2, 0, 1).unsqueeze(0)).item()

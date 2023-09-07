@@ -3,6 +3,8 @@ import numpy as np
 
 import ATE.trajectory_utils as tu
 import ATE.transformations as tf
+from scipy.spatial.transform import Rotation as R
+
 def rotation_error(pose_error):
     """Compute rotation error
     Args:
@@ -45,8 +47,8 @@ def compute_rpe(gt, pred):
         
         trans_errors.append(translation_error(rel_err))
         rot_errors.append(rotation_error(rel_err))
-    rpe_trans = np.mean(np.asarray(trans_errors))
-    rpe_rot = np.mean(np.asarray(rot_errors))
+    rpe_trans = np.sqrt(np.mean(np.asarray(trans_errors) ** 2))
+    rpe_rot = np.sqrt(np.mean(np.asarray(rot_errors) ** 2))
     return rpe_trans, rpe_rot
 
 def compute_ATE(gt, pred):
@@ -58,11 +60,11 @@ def compute_ATE(gt, pred):
     errors = []
 
     for i in range(len(pred)):
-        # cur_gt = np.linalg.inv(gt_0) @ gt[i]
+        # cur_gt = np.linalg.inv(gt[0]) @ gt[i]
         cur_gt = gt[i]
         gt_xyz = cur_gt[:3, 3] 
 
-        # cur_pred = np.linalg.inv(pred_0) @ pred[i]
+        # cur_pred = np.linalg.inv(pred[0]) @ pred[i]
         cur_pred = pred[i]
         pred_xyz = cur_pred[:3, 3]
 
@@ -71,4 +73,32 @@ def compute_ATE(gt, pred):
         errors.append(np.sqrt(np.sum(align_err ** 2)))
     ate = np.sqrt(np.mean(np.asarray(errors) ** 2)) 
     return ate
+
+def compute_ATE_v2(gt, pred):
+    xyz_err = []
+    rot_err = []
+
+    for i in range(len(pred)):
+        cur_gt = gt[i]
+        gt_xyz = cur_gt[:3, 3]
+        gt_rot = cur_gt[:3, :3]
+
+        cur_pred = pred[i]
+        pred_xyz = cur_pred[:3, 3]
+        pred_rot = cur_pred[:3, :3]
+
+        err_r = gt_rot @ (pred_rot.T)
+        err_t = gt_xyz - err_r @ pred_xyz
+
+        xyz_err.append(np.sqrt(np.sum(err_t ** 2)))
+        # print(err_t, end=' ')
+        # print(xyz_err[-1])
+        r = R.from_matrix(err_r).as_rotvec()
+
+        rot_err.append(np.linalg.norm(r))
+    
+    ate_t = np.sqrt(np.mean(np.asarray(xyz_err) ** 2))
+    ate_r = np.sqrt(np.mean(np.asarray(rot_err) ** 2))
+
+    return (ate_t, ate_r)
 

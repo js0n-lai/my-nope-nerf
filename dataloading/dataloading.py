@@ -72,7 +72,7 @@ def get_data_fields(cfg, mode='train'):
                 customized_focal=cfg['dataloading']['customized_focal'],
                 resize_factor=cfg['dataloading']['resize_factor'], depth_net=cfg['dataloading']['depth_net'], 
                 crop_size=cfg['dataloading']['crop_size'], random_ref=cfg['dataloading']['random_ref'], norm_depth=cfg['dataloading']['norm_depth'],
-                load_colmap_poses=cfg['dataloading']['load_colmap_poses'], sample_rate=cfg['dataloading']['sample_rate'])
+                load_colmap_poses=cfg['dataloading']['load_colmap_poses'], sample_rate=cfg['dataloading']['sample_rate'], bd_factor=cfg['dataloading']['bd_factor'])
     else:
         print(dataset_name, 'does not exist')
     fields['img'] = img_field

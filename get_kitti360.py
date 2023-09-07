@@ -4,7 +4,9 @@ import argparse
 import subprocess
 import numpy as np
 import yaml
+import pdb
 from scipy.spatial.transform import Rotation as R
+from utils_poses.vis_cam_traj import draw_camera_frustum_geometry
 
 def has_met_movement_thresholds(x, y, thresh_rot, thresh_translate):
     # no thresholds provided so accept
@@ -150,6 +152,7 @@ def make_lidar(src, dest, frames, decode_root, num_frames, skip_copy=False):
                 command = f"{executable} {src} {lidar_dest_abs} {seq} {lower} {upper} 1".split()
             else:
                 command = f"{executable} {src} {lidar_dest_abs} {seq} {i} {min(stop, i+499)} 1".split()
+            print(command)
             subprocess.run(command)
         
         os.chdir(cwd)
@@ -161,48 +164,7 @@ def make_lidar(src, dest, frames, decode_root, num_frames, skip_copy=False):
     
     print('done!')
 
-def get_depth_frame(root, id):
-    
-    # find which directory it's in
-    lidar_root = os.path.join(root, "lidar")
-    dirs = os.listdir(lidar_root)
-
-    for d in dirs:
-        frames = d.split("_")
-
-        # found directory containing that frame
-        if len(frames) == 3 and id >= int(frames[1]) and id <= int(frames[2]):
-            points = open(os.path.join(lidar_root, d, "lidar_points_velodyne.dat"), "r")
-            timestamps = open(os.path.join(lidar_root, d, "lidar_timestamp_velodyne.dat"), "r")
-            found = False
-            frame = None
-
-            while True:
-                t = timestamps.readline()
-                p = points.readline()
-
-                # reached EOF
-                if t == '' or p == '':
-                    break
-                
-                # found first point in frame
-                if int(t) == id and not found:
-                    found = True
-                    frame = np.array(p.split()[:3], dtype=float)
-                
-                # found subsequent points in frame
-                elif int(t) == id:
-                    frame = np.vstack((frame, np.array(p.split()[:3], dtype=float)))
-
-                # found all points in frame
-                elif int(t) == id and found:
-                    break
-            
-            points.close()
-            timestamps.close()
-            return frame
-
-def make_poses(src, dest, frames, skip_copy=False):
+def make_poses(src, dest, frames, skip_copy=False, make_gt=False, make_colmap=False):
     print('Making poses directory...', end=' ')
     poses_dest = os.path.join(dest, "poses")
     if not os.path.exists(poses_dest):
@@ -220,6 +182,7 @@ def make_poses(src, dest, frames, skip_copy=False):
     # create gt_poses.npz or poses_bounds.npy file
     gt_pose_dest = os.path.join(dest, "gt_poses.npz")
     poses_bounds_dest = os.path.join(dest, "poses_bounds.npy")
+    gt_llff_dest = os.path.join(dest, "poses_gt.npy")
 
     # get poses in camera-to-world format
     # originally in (forward, left, up) but needs to be in (down, right, backward)
@@ -234,27 +197,98 @@ def make_poses(src, dest, frames, skip_copy=False):
     intrinsics = { line.split(': ')[0] : line.split(': ')[1] for line in open(os.path.join(dest, "calibration", "perspective.txt"), "r") }
 
     result = np.zeros((len(frames), 17))
+    result_gl = np.zeros((len(frames), 4, 4))
+    result_colmap = np.zeros((len(frames), 4, 4))
+    result_orig = np.zeros((len(frames), 4, 4))
+
+    # originally in (forward, left, up), OpenGL uses (right, up, backward)
+    P_gl = np.array([[0, 0, -1],
+                  [-1, 0, 0],
+                  [0, 1, 0]])
+    # P_gl = np.eye(3)
+    P_rotate_x = np.array([[1, 0, 0],
+                           [0, -1, 0],
+                           [0, 0, -1]])
+    P_rotate_y = np.array([[-1, 0, 0],
+                           [0, 1, 0],
+                           [0, 0, -1]])
+    P_rotate_z = np.array([[-1, 0, 0],
+                           [0, -1, 0],
+                           [0, 0, 1]])
+    P_preprocess = np.eye(3)
+
+    depth_range = np.loadtxt(os.path.join(src, "data_3d_raw", seq, "velodyne_points", "frames", "depth_range.txt"))
+    from scipy.spatial.transform import Rotation as R
+    j = 0
     for i in range(len(frames)):
         # print(f"{i}: Frame {frames[i]}")
 
-        # change original transformation matrix to new (down, right, backward) convention
-        x = cam0_to_world_orig[i,1:].reshape([4, 4])
-        r_new = np.matmul(np.linalg.inv(P), x[:3,:3])
-        t_new = np.matmul(np.linalg.inv(P), x[:3,3])
+        # change original transformation matrix from (forward, left, up) to (down, right, backward) convention
+        while cam0_to_world_orig[j,0] != frames[i]:
+            j += 1
+        
+        x = cam0_to_world_orig[j,1:].reshape([4, 4])
+        r_new = x[:3,:3]
+        # print()
+        # print(r_new)
 
-        # get near and far depths for the frame
-        depths = get_depth_frame(dest, frames[i])
+        # rotate about local z axis
+        z_local = r_new[:,-1]
+        rot = R.from_rotvec(z_local*np.pi).as_matrix()
+        r_new = np.matmul(np.linalg.inv(rot), r_new)
+
+        # rotate about local y axis
+        y_local = r_new[:,1]
+        rot = R.from_rotvec(y_local*np.pi).as_matrix()
+        r_new = np.matmul(np.linalg.inv(rot), r_new)
+        t_new = x[:3,3]
+
+        # change from (forward, left, up) to (down, right, backward)
+        # r_new = np.matmul(np.linalg.inv(P_gl), r_new)
+        # t_new = np.matmul(np.linalg.inv(P_gl), t_new)
+
+        r_new_gl = r_new
+        t_new_gl = t_new
+
+        # do the inverse transformation of rotations to (y, -x, z) done when preprocessing poses_bounds.npy
+        r_new = np.hstack([-r_new[:,1].reshape([-1, 1]), r_new[:,0].reshape([-1, 1]), r_new[:,2:]])
+
+        rt_34 = np.hstack((r_new, t_new.reshape(-1, 1)))
+        result_colmap[i,:,:] = np.vstack((rt_34, np.array([[0,0,0,1]])))
+
+        depth_min = depth_range[frames[i],1]
+        depth_max = depth_range[frames[i],2]
+
         width = float(intrinsics['S_rect_00'].split()[0])
         height = float(intrinsics['S_rect_00'].split()[1])
-        y = np.hstack((r_new.flatten(), t_new.flatten(),
-                       width, height,
-                       float(intrinsics["K_00"].split()[0]),
-                       np.min(depths[:,2]), np.max(depths[:,2])))
+        colmap_35 = np.hstack((rt_34, np.array([[width],[height],[float(intrinsics["K_00"].split()[0])]])))
+        y = np.hstack((colmap_35.flatten(), depth_min, depth_max))
 
         result[i,:] = y
 
-    np.savez(gt_pose_dest, poses=result)
-    np.save(poses_bounds_dest, result)
+        # change to (right, up, backward)
+        # r_new_gl = np.matmul(P_rotate_y, np.matmul(np.linalg.inv(P_gl), x[:3,:3]))
+        # t_new_gl = np.matmul(np.linalg.inv(P_gl), x[:3,3])
+        # pdb.set_trace()
+        z = np.vstack((np.hstack((r_new_gl, t_new_gl.reshape(-1, 1))), np.array([[0,0,0,1]])))
+        result_gl[i,:,:] = z
+
+        r_orig = x[:3,:3]
+        t_orig =x[:3,3]
+        w = np.vstack((np.hstack((r_orig, t_orig.reshape(-1, 1))), np.array([[0,0,0,1]])))
+        result_orig[i,:,:] = w
+
+    # pdb.set_trace()
+    # draw_camera_frustum_geometry(result_colmap, height, width, float(intrinsics["K_00"].split()[0]), float(intrinsics["K_00"].split()[4]), frustum_length=0.5, coord='opengl',draw_now=True)
+    gl = draw_camera_frustum_geometry(result_gl, height, width, float(intrinsics["K_00"].split()[0]), float(intrinsics["K_00"].split()[4]), coord='opengl', draw_now=True)
+    draw_camera_frustum_geometry(result_orig, height, width, float(intrinsics["K_00"].split()[0]), float(intrinsics["K_00"].split()[4]), coord='opengl', draw_now=True)
+
+    if make_gt:
+        np.savez(gt_pose_dest, poses=result_gl)
+    
+    np.save(gt_llff_dest, result)
+    if make_colmap:
+        np.save(poses_bounds_dest, result)
 
     print("done!")
     
@@ -273,7 +307,8 @@ def make_yaml(dest, args, resolution):
     preprocess['dataloading']['scene'] = [scene]
     preprocess['dataloading']['resize_factor'] = args.resize_factor
     preprocess['dataloading']['customized_poses'] = args.customised_poses
-    preprocess['dataloading']['load_colmap_poses'] = not args.customised_poses
+    preprocess['dataloading']['customized_focal'] = args.customised_focal
+    preprocess['dataloading']['load_colmap_poses'] = args.load_colmap_poses
 
     config_dest = os.path.join(os.getcwd(), "configs", "KITTI")
     preprocess_yaml = os.path.join(config_dest, f"preprocess_{scene}.yaml")
@@ -281,7 +316,7 @@ def make_yaml(dest, args, resolution):
         yaml.dump(preprocess, f)
     
     # create train yaml
-    with open(os.path.join("configs", "Tanks", "Ballroom.yaml"), "r") as f:
+    with open(os.path.join("configs", "Tanks", "Ballroom_default.yaml"), "r") as f:
         train = yaml.safe_load(f)
 
     train["dataloading"]["path"] = path
@@ -289,11 +324,13 @@ def make_yaml(dest, args, resolution):
     train["dataloading"]["customized_poses"] = args.customised_poses
     train["dataloading"]["customized_focal"] = args.customised_focal
     train["dataloading"]["resize_factor"] = args.resize_factor
-    train["dataloading"]["load_colmap_poses"] = not args.customised_poses
+    train["dataloading"]["load_colmap_poses"] = args.load_colmap_poses
     train["pose"]["learn_pose"] = args.learn_pose
     train["pose"]["learn_R"] = args.learn_pose
     train["pose"]["learn_t"] = args.learn_pose
-    train["pose"]["init_pose"] = not args.learn_pose
+    train["pose"]["init_pose"] = args.init_pose
+    if args.load_colmap_poses:
+        train["pose"]["init_pose_type"] = "colmap"
     train["pose"]["init_R_only"] = False
     train["pose"]["learn_focal"] = args.learn_focal
     train["pose"]["update_focal"] = args.update_focal
@@ -306,8 +343,21 @@ def make_yaml(dest, args, resolution):
     if args.match_method != 'dense':
         print(f"Warning: {args.match_method} is not implemented")
     train["training"]["match_method"] = args.match_method
-    train["extract_images"]["resolution"] = [x // 2 for x in resolution]
+    train["extract_images"]["resolution"] = [int(x / args.resize_factor) for x in resolution]
     train["extract_images"]["eval_depth"] = True
+    train["extract_images"]["traj_option"] = args.traj_option
+    train["extract_images"]["bspline_degree"] = args.bspline_degree
+    train["depth"]["depth_loss_type"] = args.depth_loss_type
+
+    # override settings for Vanilla NeRF simulation
+    if args.simulate_vanilla:
+        train["pose"]["init_pose"] = True
+        train["pose"]["learn_R"] = False
+        train["pose"]["learn_t"] = False
+        train["pose"]["learn_focal"] = False
+        train["training"]["auto_scheduler"] = False
+        train["training"]["scheduling_start"] = 0
+        train["training"]["annealing_epochs"] = 0
 
     train_yaml = os.path.join(config_dest, f"{scene}.yaml")
     with open(train_yaml, "w") as f:
@@ -335,17 +385,23 @@ if __name__ == "__main__":
     method.add_argument("-r", type=float, action="store", dest="thresh_rot", default=None, help="Minimum rotation threshold between consecutive frames (deg). If not provided, rotation will not be considered.")
     method.add_argument("-t", type=float, action="store", dest="thresh_translate", default=None, help="Minimum translation threshold between consecutive frames (m). If not provided, translation will not be considered.")
     config = parser.add_argument_group("Config", description="Parameters and hyperparameters for the NoPe-NeRF model. Default values are based on configs/default.yaml")
-    config.add_argument('--resize-factor', action="store", type=int, default=2, help="Factor to downscale each input image dimension (default: 2)")
+    config.add_argument('--resize-factor', action="store", type=int, default=1, help="Factor to downscale each input image dimension (default: 1)")
+    config.add_argument('--init-pose', action="store_true", default=False, help="Provide initial pose (default: False)")
     config.add_argument("--learn-pose", action="store", type=bool, default=True, help="Enable NoPe-NeRF to optimise camera poses (default: True)")
     config.add_argument("--learn-focal", action="store", type=bool, default=False, help="Enable NoPe-NeRF to optimise camera intrinsics (default: False)")
     config.add_argument("--learn-distortion", action="store", type=bool, default=True, help="Enable NoPe-NeRF to optimise DPT depth frame distortion coefficients (default: True)")
+    config.add_argument("--load-colmap-poses", action="store_true", default=False, help="Use COLMAP poses (default: False)")
+    config.add_argument("--mock-colmap-poses", action="store_true", default=False, help="Generate mock COLMAP output using other poses (default: False)")
     config.add_argument("--customised-poses", action="store_true", default=False, help="Use poses other than those from COLMAP (default: False)")
     config.add_argument("--customised-focal", action="store_true", default=False, help="Use intrinsics other than those from COLMAP (default: False)")
     config.add_argument("--update-focal", action="store", default=True, help="Enable NoPe-NeRF to update camera intrinsics (default: True)")
     config.add_argument("--match-method", action="store", choices=["dense", "sparse"], default="dense", help="Method to compute point cloud loss. sparse is unimplemented (default: dense)")
     config.add_argument("--with-ssim", action="store_true", default=False, help="Use SSIM loss when computing DPT reprojection loss (default: False)")
     config.add_argument("--use-gt-depth", action="store_true", default=False, help="Use GT depths - not implemented (default: False)")
-    
+    config.add_argument("--traj-option", choices=["sprial", "interp", "bspline"], default="bspline", help="Camera trajectory option for rendering (default: bspline)")
+    config.add_argument("--bspline-degree", type=int, default=100, help="Basis function degree for BSpline trajectory (default: 100)")
+    config.add_argument("--depth-loss-type", choices=["l1", "invariant"], default="l1", help="Type of depth loss (default: invariant)")
+    config.add_argument("--simulate-vanilla", action="store_true", default=False, help="Configure settings to simulate Vanilla NeRF. Overrides most other config settings (default: False)")
     args = parser.parse_args()
 
     # get frame IDs based on filter parameters
@@ -358,6 +414,6 @@ if __name__ == "__main__":
     
     make_calib(args.root, out_dir, frames, args.skip_copy)
     make_img(args.root, out_dir, frames, args.skip_copy)
-    make_lidar(args.root, out_dir, frames, args.decoder, get_num_frames(args), args.skip_copy)
-    resolution = make_poses(args.root, out_dir, frames, args.skip_copy)
+    # make_lidar(args.root, out_dir, frames, args.decoder, get_num_frames(args), args.skip_copy)
+    resolution = make_poses(args.root, out_dir, frames, args.skip_copy, args.customised_poses, args.mock_colmap_poses)
     make_yaml(out_dir, args, resolution)

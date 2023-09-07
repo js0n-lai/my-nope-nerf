@@ -68,6 +68,18 @@ def align_ate_c2b_use_a2b(traj_a, traj_b, traj_c=None):
     traj_c_aligned = torch.from_numpy(traj_c_aligned).to(device)
     return traj_c_aligned  # (N1, 4, 4)
 
+# rel * pred = GT --> rel = GT * inv(pred)
+def align_ate_init_pose(pred, gt):
+    device = pred.device
+    pred = pred.float().cpu().numpy()
+    gt = gt.float().cpu().numpy()
+    rt_rel = gt[0] @ np.linalg.inv(pred[0])
+    aligned_pred = np.zeros(pred.shape)
+
+    for i in range(pred.shape[0]):
+        aligned_pred[i] = rt_rel @ pred[i]
+    
+    return torch.from_numpy(aligned_pred).to(device)
 
 
 def align_scale_c2b_use_a2b(traj_a, traj_b, traj_c=None):

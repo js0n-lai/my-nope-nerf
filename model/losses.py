@@ -56,10 +56,11 @@ class Loss(nn.Module):
         else:
             loss = F.mse_loss(pred_depth_n, gt_depth_n)
         return loss
-    
+
     def get_depth_loss(self, depth_pred, depth_gt):
         if self.depth_loss_type == 'l1':
             loss = self.l1_loss(depth_pred, depth_gt) / float(depth_pred.shape[0])
+            # loss = self.l1_loss(depth_pred[depth_gt < 1], depth_gt[depth_gt < 1]) / float(depth_pred[depth_gt < 1].shape[0])
         elif self.depth_loss_type=='invariant':
             loss = self.depth_loss_dpt(depth_pred, depth_gt)
         return loss
@@ -156,6 +157,10 @@ class Loss(nn.Module):
             diff_img = (0.15 * diff_img + 0.85 * ssim_map)
         loss = self.mean_on_mask(diff_img, valid_points)
         return loss
+    
+    def get_t_cycle_loss(self, rt_pred, rt_gt):
+        return torch.norm(torch.eye(4).to(rt_gt.device) - torch.inverse(rt_gt) @ rt_pred)
+
     def forward(self, rgb_pred, rgb_gt,  depth_pred=None, depth_gt=None, 
                 t_list=None, X=None, Y=None,  rgb_pc1=None, 
                 rgb_pc1_proj=None, valid_points=None, 
@@ -186,8 +191,11 @@ class Loss(nn.Module):
             depth_consistency_loss = self.get_depth_consistency_loss(d1_proj, d2, d2_proj, d1)
         else: 
             depth_consistency_loss = torch.tensor(0.0).cuda().float()
+        if weights['t_cycle_weight'] != 0.0:
+            t_cycle_loss = self.get_t_cycle_loss(kwargs['rt_12'], kwargs['rt_12_gt'])
+        else:
+            t_cycle_loss = torch.tensor(0.0).cuda().float()
         
-
         if (weights['rgb_weight']!=0.0) or (weights['depth_weight'] !=0.0):
             rgb_l2_mean = F.mse_loss(rgb_pred, rgb_gt)
         else:
@@ -199,7 +207,8 @@ class Loss(nn.Module):
                             weights['weight_dist_2nd_loss'] * loss_dist_2nd+\
                                 weights['pc_weight'] * pc_loss+\
                                     weights['rgb_s_weight'] * rgb_s_loss+\
-                                        weights['depth_consistency_weight'] * depth_consistency_loss
+                                        weights['depth_consistency_weight'] * depth_consistency_loss + \
+                                            weights['t_cycle_weight'] * t_cycle_loss
                                                                
         if torch.isnan(loss):
             breakpoint()
@@ -212,7 +221,8 @@ class Loss(nn.Module):
             'loss_dist_2nd': loss_dist_2nd,
             'loss_pc': pc_loss,
             'loss_rgb_s': rgb_s_loss,
-            'loss_depth_consistency': depth_consistency_loss
+            'loss_depth_consistency': depth_consistency_loss,
+            'loss_t_cycle': t_cycle_loss
         }
      
         return return_dict
