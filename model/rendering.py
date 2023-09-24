@@ -46,7 +46,6 @@ class Renderer(nn.Module):
         normal_loss = self.cfg['normal_loss']
         outside_steps = self.cfg['outside_steps']
 
-
         depth_range = torch.tensor(self.depth_range)
         n_max_network_queries = self.n_max_network_queries
 
@@ -148,11 +147,13 @@ class Renderer(nn.Module):
             dists = dists / ray_vector_norm[0]
             d_i_src = d_i_src / ray_vector_norm[0]
         
-        dist_rendered_masked = dist_pred[network_object_mask]
-        dist_gt_masked = d_i_src[network_object_mask]
-
-        mask_depth = (depth.squeeze()[network_object_mask] >= self.depth_range[0]) & (depth.squeeze()[network_object_mask] <= self.depth_range[1])
-        # dist_gt_masked[~mask_depth] = -1 # set to nonsense value for marker in depth loss
+        # only mask depths during training
+        if not eval_:
+            dist_rendered_masked = dist_pred[network_object_mask]
+            dist_gt_masked = d_i_src[network_object_mask]
+        else:
+            dist_rendered_masked = dist_pred
+            dist_gt_masked = d_i_src
 
         if sample_option=='ndc':
             dist_gt_masked = 1 - 1/dist_gt_masked

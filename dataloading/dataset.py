@@ -19,7 +19,8 @@ class DataField(object):
                  use_DPT=False, scene_name=[' '], mode='train', spherify=False, 
                  load_ref_img=False,customized_poses=False,
                  customized_focal=False,resize_factor=2, depth_net='dpt',crop_size=0, 
-                 random_ref=False,norm_depth=False,load_colmap_poses=True, sample_rate=8, bd_factor=0.75, **kwargs):
+                 random_ref=False,norm_depth=False,load_colmap_poses=True, sample_rate=8,
+                 bd_factor=0.75, sparsify_depth=False, sparsify_depth_pattern=[1, 0, 1, 0], out_dir=None, **kwargs):
         """load images, depth maps, etc.
         Args:
             model_path (str): path of dataset
@@ -144,7 +145,6 @@ class DataField(object):
         c2ws_gt_llff, H_gt, W_gt, focal_gt, reverse_gt = self.make_c2ws_from_llff(poses_gt, bds_gt, spherify, False, False, bd_factor)
         self.c2ws_gt_llff = c2ws_gt_llff
         self.reverse_gt = reverse_gt
-        # pdb.set_trace()
 
         # if c2ws is not None:
         #     import open3d as o3d
@@ -160,10 +160,6 @@ class DataField(object):
 
         #     viewer.run()
         #     exit()
-
-        # from utils_poses.vis_cam_traj import draw_camera_frustum_geometry
-        # draw_camera_frustum_geometry(self.c2ws_gt_llff.cpu().numpy(), H_gt, W_gt, fx_gt, fy_gt, 0.1, np.array([39, 125, 161], dtype=np.float32) / 255, coord='opengl',draw_now=True)
-        # exit()
         
         self.N_imgs_train = len(i_train)
         self.N_imgs_test = len(i_test)
@@ -190,18 +186,45 @@ class DataField(object):
         
         try:
             # self.gt_depth = load_gt_depths(img_names, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
-            self.gt_depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
+            self.gt_depth = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
         except AttributeError:
             self.gt_depth = None
 
-        # breakpoint()
-        # self.gt_depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio)
         if not use_DPT and not with_depth:
-            self.dpt_depth = load_depths_npz(image_list_train, pred_depth_path, norm=norm_depth)
+            self.dpt_depth = load_depths_npz(self.img_list, pred_depth_path, norm=norm_depth)
+            self.depth_mask = np.ones(self.dpt_depth.shape, dtype=bool)
         elif with_depth:
-            self.depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1], reverse=reverse_gt)
-            # self.depth = load_gt_depths(image_list_train, load_dir, crop_ratio=crop_ratio)
- 
+            self.depth = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1], reverse=reverse_gt)
+
+            # black out depth pixels according to pattern [x_retain, x_skip, y_retain, y_skip]
+            if sparsify_depth:
+                self.depth_mask = self.sparsify_depths(sparsify_depth_pattern, os.path.join(load_dir, f'sparse_{out_dir}'), self.img_list)
+                self.sparsify_depths(sparsify_depth_pattern, os.path.join(load_dir, f'sparse_{out_dir}'), self.img_list)
+            else:
+                self.depth_mask = np.ones(self.depth.shape, dtype=bool)
+
+    def sparsify_depths(self, pattern, sparse_dir, img_list):
+        N, H, W = self.depth.shape
+        mask = np.ones(self.depth.shape, dtype=bool)
+        x_mask = [True] * pattern[0] + [False] * pattern[1]
+        y_mask = [True] * pattern[2] + [False] * pattern[3]
+        y = 0
+
+        for h in range(H):
+            x = 0
+            for w in range(W):
+                self.depth[:,h,w] *= x_mask[x] and y_mask[y]
+                mask[:,h,w] = x_mask[x] and y_mask[y]
+                x = (x + 1) % len(x_mask)
+            y = (y + 1) % len(y_mask)
+        
+        os.makedirs(sparse_dir, exist_ok=True)
+        for i in range(N):
+            depth_img = (np.clip(255.0 / self.depth[i].max() * (self.depth[i] - self.depth[i].min()), 0, 255)).astype(np.uint8)
+            imageio.imwrite(os.path.join(sparse_dir, img_list[i]), depth_img)
+        
+        return mask
+
     def make_c2ws_from_llff(self, poses, bds, spherify, overwrite_hwf=False, visualise=False, bd_factor=0.75):
         # pdb.set_trace()
         if visualise:
@@ -280,13 +303,16 @@ class DataField(object):
                 ref_idx = idx + ran_idx
         image = self.imgs[ref_idx]
 
-        # store depths
-        if self.gt_depth is not None:
-            gt_depth = self.gt_depth[ref_idx]
-            data['gt_depths'] = gt_depth
+        # # store depths
+        # if self.gt_depth is not None:
+        #     gt_depth = self.gt_depth[ref_idx]
+        #     data['gt_depths'] = gt_depth
+        
+        # data['ref_depth_mask'] = self.depth_mask[ref_idx]
         if self.dpt_depth is not None:
             dpt = self.dpt_depth[ref_idx]
             data['ref_dpts'] = dpt
+            
         elif self.with_depth:
             depth = self.depth[ref_idx]
             data['ref_depths'] = depth
@@ -307,10 +333,15 @@ class DataField(object):
     def load_depth(self, idx, data={}):
         depth = self.depth[idx]
         data['depth'] = depth
+        data['depth_mask'] = self.depth_mask[idx]
     
+    def load_gt_depth(self, idx, data={}):
+        data['gt_depths'] = self.gt_depth[idx]
+
     def load_DPT_depth(self, idx, data={}):
         depth_dpt = self.dpt_depth[idx]
         data['dpt'] = depth_dpt
+        data['depth_mask'] = self.depth_mask[idx]
 
     def load_camera(self, idx, data={}):
         data['camera_mat'] = self.K
@@ -330,6 +361,7 @@ class DataField(object):
         if not self.mode =='render':
             self.load_image(idx_img, data)
             self.load_gt_pose(idx_img, data)
+            self.load_gt_depth(idx_img, data)
             if self.ref_img:
                 self.load_ref_img(idx_img, data)
             if self.with_depth:

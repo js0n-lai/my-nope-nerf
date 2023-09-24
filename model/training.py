@@ -101,7 +101,8 @@ class Trainer(object):
 
     
     def render_visdata(self, data, resolution, it, out_render_path):
-        (img, depth_input, camera_mat, scale_mat, img_idx, pose_gt) = self.process_data_dict(data)
+        # (img, depth_input, camera_mat, scale_mat, img_idx, pose_gt) = self.process_data_dict(data)
+        (img, depth_input, camera_mat, scale_mat, img_idx, *other) = self.process_data_dict(data)
         h, w = resolution
         if self.pose_param_net:
             c2w = self.pose_param_net(img_idx)
@@ -174,11 +175,13 @@ class Trainer(object):
         if depth is None:
             depth = data.get('img.depth')
         depth = depth.to(device).unsqueeze(1)
+        depth_mask = data.get('img.depth_mask').to(device).unsqueeze(1)
         camera_mat = data.get('img.camera_mat').to(device)
         scale_mat = data.get('img.scale_mat').to(device)
         pose_gt = data.get('img.pose_gt').to(device)
 
-        return (img, depth, camera_mat, scale_mat, img_idx, pose_gt)
+        return (img, depth, camera_mat, scale_mat, img_idx, pose_gt, depth_mask)
+        # return (img, depth, camera_mat, scale_mat, img_idx, pose_gt)
 
     def process_data_reference(self, data):
         ''' Processes the data dictionary and returns respective tensors
@@ -192,8 +195,10 @@ class Trainer(object):
         if ref_depths is None:
             ref_depths = data.get('img.ref_depths')
         ref_depths = ref_depths.to(device).unsqueeze(1)
+        # ref_depth_mask = data.get('img.ref_depth_mask').to(device).unsqueeze(1)
         ref_pose_gt = data.get('img.ref_pose_gt').to(device)
         ref_idxs = data.get('img.ref_idxs')
+        # return (ref_imgs, ref_depths, ref_idxs, ref_pose_gt, ref_depth_mask)
         return (ref_imgs, ref_depths, ref_idxs, ref_pose_gt)
 
     def anneal(self, start_weight, end_weight, anneal_start_epoch, anneal_epoches, current):
@@ -230,8 +235,10 @@ class Trainer(object):
 
         n_points = self.n_training_points
         nl = self.nearest_limit
-        (img, depth_input, camera_mat_gt, scale_mat, img_idx, pose_gt) = self.process_data_dict(data)   
+        (img, depth_input, camera_mat_gt, scale_mat, img_idx, pose_gt, depth_mask) = self.process_data_dict(data)   
+        # (img, depth_input, camera_mat_gt, scale_mat, img_idx, pose_gt) = self.process_data_dict(data)   
         if use_ref_imgs:
+            # (ref_img, depth_ref, ref_idx, ref_pose_gt, ref_depth_mask) = self.process_data_reference(data)
             (ref_img, depth_ref, ref_idx, ref_pose_gt) = self.process_data_reference(data)
 
         device = self.device
@@ -265,8 +272,16 @@ class Trainer(object):
         else:
             camera_mat = camera_mat_gt
         
-        # Sample pixels
+        # Sample pixels but make sure there's at least one pixel with a valid depth
+        # Only needed for sparse depths
         ray_idx = torch.randperm(h*w,device=device)[:n_points]
+        depth_mask_flat = torch.flatten(depth_mask)
+
+        if data.get('img.dpt') is None:
+            while not depth_mask_flat[ray_idx].any():
+                print('No valid depths found, resampling...')
+                ray_idx = torch.randperm(h*w,device=device)[:n_points]
+
         img_flat = img.view(batch_size, 3, h*w).permute(0,2,1)
         rgb_gt = img_flat[:,ray_idx]
         p_full = arange_pixels((h, w), batch_size, device=device)[1]

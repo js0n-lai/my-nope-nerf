@@ -101,6 +101,20 @@ def make_depth(src, dest, frames, skip_copy=False):
     
     print('done!')
 
+def make_disp(dest):
+    imgs = os.path.join(dest, 'depth')
+    frames = [os.path.join(imgs, x) for x in sorted(os.listdir(imgs)) if '.png' in x]
+    disp_path = os.path.join(dest, 'disp')
+    if not os.path.exists(disp_path):
+        os.mkdir(disp_path)
+
+    for im in frames:
+        depth = cv2.imread(im, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
+        disp = 1 / depth
+        disp = (np.clip(255.0 / disp.max() * (disp - disp.min()), 0, 255)).astype(np.uint8)
+        disp = cv2.applyColorMap(disp, cv2.COLORMAP_INFERNO)
+        cv2.imwrite(os.path.join(disp_path, os.path.basename(im)), disp)
+
 def make_poses(src, dest, frames, make_gt=False, make_colmap=False):
     poses_src = os.path.join(src, f"vkitti_{args.version}_extrinsicsgt", f"{args.id}_{args.variation}.txt")
     poses = pd.read_csv(poses_src, sep=" ", index_col=False)
@@ -207,7 +221,9 @@ def make_yaml(dest, args, resolution):
     train["dataloading"]["resize_factor"] = args.resize_factor
     train["dataloading"]["load_colmap_poses"] = args.load_colmap_poses
     train["dataloading"]["with_depth"] = args.with_depth
-    train["pose"]["learn_pose"] = args.learn_pose
+    train["dataloading"]["sparsify_depth"] = args.sparsify_depth
+    train["dataloading"]["sparsify_depth_pattern"] = args.sparsify_depth_pattern
+
     train["pose"]["learn_R"] = args.learn_pose
     train["pose"]["learn_t"] = args.learn_pose
     train["pose"]["init_pose"] = args.init_pose
@@ -216,14 +232,15 @@ def make_yaml(dest, args, resolution):
     train["pose"]["init_R_only"] = False
     train["pose"]["learn_focal"] = args.learn_focal
     train["pose"]["update_focal"] = args.update_focal
+
     train["distortion"] = dict()
-    train["distortion"]["learn_distortion"] = args.learn_distortion
+    # disable distortion parameters for GT depths
+    if args.with_depth or not args.learn_distortion:
+        train["distortion"]["learn_shift"] = False
+        train["distortion"]["learn_scale"] = False
+    
     train["training"]["out_dir"] = os.path.join("out", os.path.relpath(dest, "data"))
     train["training"]["with_ssim"] = args.with_ssim
-
-    if args.match_method != 'dense':
-        print(f"Warning: {args.match_method} is not implemented")
-    train["training"]["match_method"] = args.match_method
     train["extract_images"]["resolution"] = [int(np.ceil(x / args.resize_factor)) for x in resolution]
     train["extract_images"]["eval_depth"] = True
     train["extract_images"]["traj_option"] = args.traj_option
@@ -278,12 +295,13 @@ if __name__ == "__main__":
     config.add_argument("--customised-poses", action="store_true", default=False, help="Use poses other than those from COLMAP (default: False)")
     config.add_argument("--customised-focal", action="store_true", default=False, help="Use intrinsics other than those from COLMAP (default: False)")
     config.add_argument("--update-focal", action="store", default=True, help="Enable NoPe-NeRF to update camera intrinsics (default: True)")
-    config.add_argument("--match-method", action="store", choices=["dense", "sparse"], default="dense", help="Method to compute point cloud loss. sparse is unimplemented (default: dense)")
     config.add_argument("--with-ssim", action="store_true", default=False, help="Use SSIM loss when computing DPT reprojection loss (default: False)")
     config.add_argument("--with-depth", action="store_true", default=False, help="Use GT depths (default: False)")
+    config.add_argument("--sparsify-depth", action="store_true", default=False, help="Artificially generate sparse depths at runtime by setting pixels to 0 (default: False)")
+    config.add_argument("--sparsify-depth-pattern", default=[1, 0, 1, 0], nargs=4, help="If sparsify-depth is enabled, this is the pattern to tile in depth frames expressed as [x_keep, x_skip, y_keep, y_skip] in pixels (default: [1, 0, 1, 0] which keeps all depth pixels).")
     config.add_argument("--traj-option", choices=["sprial", "interp", "bspline"], default="bspline", help="Camera trajectory option for rendering (default: bspline)")
     config.add_argument("--bspline-degree", type=int, default=100, help="Basis function degree for BSpline trajectory (default: 100)")
-    config.add_argument("--depth-loss-type", choices=["l1", "invariant"], default="l1", help="Type of depth loss (default: invariant)")
+    config.add_argument("--depth-loss-type", choices=["l1", "invariant"], default="l1", help="Type of depth loss (default: l1)")
     config.add_argument("--simulate-vanilla", action="store_true", default=False, help="Configure settings to simulate Vanilla NeRF. Overrides most other config settings (default: False)")
     args = parser.parse_args()
 
@@ -298,5 +316,6 @@ if __name__ == "__main__":
     make_calib(out_dir)
     make_img(args.root, out_dir, frames, args.skip_copy)
     make_depth(args.root, out_dir, frames, args.skip_copy)
+    make_disp(out_dir)
     resolution = make_poses(args.root, out_dir, frames, args.customised_poses, args.mock_colmap_poses)
     make_yaml(out_dir, args, resolution)

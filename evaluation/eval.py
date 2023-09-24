@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import os
 from re import L
 import sys
@@ -5,7 +6,7 @@ import argparse
 import time
 import logging
 import torch
-
+plt.figure()
 sys.path.append(os.path.join(sys.path[0], '..'))
 from dataloading import get_dataloader, load_config
 from model.checkpoints import CheckpointIO
@@ -19,7 +20,10 @@ from utils_poses.align_traj import align_scale_c2b_use_a2b, align_ate_c2b_use_a2
 from tqdm import tqdm
 from model.common import mse2psnr
 from torch.utils.tensorboard import SummaryWriter
-import pdb
+from sklearn import linear_model
+
+def clip_depths(x):
+    return np.clip(255.0 / x.max() * (x - x.min()), 0.1, 1)
 
 def eval(cfg):
     torch.manual_seed(0)
@@ -157,8 +161,8 @@ def eval(cfg):
     depth_preds = []
     # init lpips loss.
     lpips_metric = lpips_lib.LPIPS(net='vgg').to(device)
-    min_depth=0.1
-    max_depth=20
+    min_depth = cfg['eval_pose']['depth_range'][0]
+    max_depth = cfg['eval_pose']['depth_range'][1]
     for data in loader:
         out = generator.eval_images(data, render_dir, fxfy, lpips_metric, logger=logger, min_depth=min_depth, max_depth=max_depth)
         imgs.append(out['img'])
@@ -182,36 +186,53 @@ def eval(cfg):
    
     if cfg['extract_images']['eval_depth']:
         depth_errors = []
+        depth_errors_actual = []
         ratio = np.median(np.concatenate(depth_gts)) / \
                         np.median(np.concatenate(depth_preds))
-        
-        if 'reverse_gt' in dir(train_dataset['img']):
+        print(f"Scale = {ratio}")
+
+        do_actual = 'reverse_gt' in dir(train_dataset['img'])
+        if do_actual:
             ratio_actual = train_dataset['img'].reverse_gt['sc']
             sc_spherify = train_dataset['img'].reverse_gt.get('sc_spherify', 1)
             ratio_actual *= sc_spherify
-
-        print(f"Scaled by {ratio}, actual = {1 / ratio_actual}")
-        # pdb.set_trace()
+            ratio_actual = 1 / ratio_actual
+            print(f"Actual scale = {ratio_actual}")
         for i in range(len(depth_preds)):
             gt_depth = depth_gts[i]
             pred_depth = depth_preds[i]
 
             pred_depth = pred_depth * ratio
-            # pred_depth = pred_depth / ratio_actual
             pred_depth[pred_depth < min_depth] = min_depth
             pred_depth[pred_depth > max_depth] = max_depth
-
             depth_errors.append(compute_errors(gt_depth, pred_depth))
-        
+
+            if do_actual:
+                pred_depth_actual = depth_preds[i] * ratio_actual
+                pred_depth_actual[pred_depth_actual < min_depth] = min_depth
+                pred_depth_actual[pred_depth_actual > max_depth] = max_depth
+                depth_errors_actual.append(compute_errors(gt_depth, pred_depth_actual))
 
         mean_errors = np.array(depth_errors).mean(0)                                                                                       
         print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
         print(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
         print("\n-> Done!")
 
-        with open(os.path.join(generation_dir, 'depth_evaluation.txt'), 'a') as f:
+        if do_actual:
+            mean_errors_actual = np.array(depth_errors_actual).mean(0)                                                                                       
+            print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
+            print(("&{: 8.3f}  " * 7).format(*mean_errors_actual.tolist()) + "\\\\")
+            print("\n-> Done!")
+
+        with open(os.path.join(generation_dir, 'evaluation.txt'), 'a') as f:
+            f.writelines('Mean MSE: {0:.2f}, PSNR: {1:.2f}, SSIM: {2:.2f}, LPIPS {3:.2f}\n'.format(mean_mse, mean_psnr,
+                                                                                    mean_ssim, mean_lpips))
             f.writelines(("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3") + '\n')
             f.writelines(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
+
+            if do_actual:
+                f.writelines(("{:>8} | " * 7).format("\nabs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3") + '\n')
+                f.writelines(("&{: 8.3f}  " * 7).format(*mean_errors_actual.tolist()) + "\\\\")
 
     imgs = np.stack(imgs, axis=0)
     video_out_dir = os.path.join(render_dir, 'video_out')

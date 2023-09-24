@@ -16,6 +16,8 @@ dataloading:
   img_size:
   path:
   with_depth: False
+  sparsify_depth: False
+  sparsify_depth_pattern: [1, 0, 1, 0] # [x_retain, x_skip, y_retain, y_skip]
   with_mask: False
   spherify: True
   customized_poses: False #use poses other than colmap
@@ -29,7 +31,6 @@ dataloading:
   shuffle: True
   sample_rate: 8
   bd_factor: 0.75
-
 rendering:
   type: nope_nerf # changed
   n_max_network_queries: 64000
@@ -147,5 +148,6 @@ eval_pose:
   extraction_dir: extraction
   init_method: pre
   opt_eval_lr: 0.001
+  depth_range: [0.1, 50]
 
 

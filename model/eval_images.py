@@ -37,14 +37,17 @@ class Eval_Images(object):
         batch_size, _, h, w = img.shape
         depth_img = data.get('img.depth', torch.ones(batch_size, h, w))
         depth_gt = data.get('img.gt_depths')
+        # depth_mask = data.get('img.depth_mask')
         img_idx = data.get('img.idx')
         camera_mat = data.get('img.camera_mat').to(device)
         scale_mat = data.get('img.scale_mat').to(device)
 
-        return (img, depth_img,  camera_mat, scale_mat, img_idx, depth_gt)
+        # return (img, depth_img, camera_mat, scale_mat, img_idx, depth_gt, depth_mask)
+        return (img, depth_img, camera_mat, scale_mat, img_idx, depth_gt)
 
     def eval_images(self, data, render_dir, fxfy, lpips_vgg_fn, logger, min_depth=0.1, max_depth=20, it=0):
         self.renderer.eval()
+        # (img_gt, depth, camera_mat, scale_mat, img_idx, depth_gt, depth_mask) = self.process_data_dict(data)
         (img_gt, depth, camera_mat, scale_mat, img_idx, depth_gt) = self.process_data_dict(data)
         img_idx = int(img_idx)
         img_gt = img_gt.squeeze(0).permute(1, 2, 0)
@@ -52,9 +55,8 @@ class Eval_Images(object):
         if depth_gt is not None: 
             depth_gt = depth_gt.squeeze(0).numpy()
         else:
-            print('No GT depths available, using DPT')
+            print('No GT depths available, using input depths')
             depth_gt = depth.squeeze(0).numpy()
-        # breakpoint()
         mask = (depth_gt > min_depth) * (depth_gt < max_depth)
 
         if self.use_learnt_poses:
@@ -107,25 +109,46 @@ class Eval_Images(object):
        
         
         gt_height, gt_width = depth_gt.shape[:2]
-        depth_out = cv2.resize(depth_out, (gt_width, gt_height), interpolation=cv2.INTER_NEAREST)
+        depth_out = cv2.resize(depth_out, (gt_width, gt_height), interpolation=cv2.INTER_AREA)
         
         img_out_dir = os.path.join(render_dir, 'img_out')
         depth_out_dir = os.path.join(render_dir, 'depth_out')
         img_gt_dir = os.path.join(render_dir, 'img_gt_out')
+        depth_gt_dir = os.path.join(render_dir, 'depth_gt_out')
+        disp_out_dir = os.path.join(render_dir, 'disp_out')
+        disp_gt_dir = os.path.join(render_dir, 'disp_gt_out')
         if not os.path.exists(img_out_dir):
             os.makedirs(img_out_dir)
         if not os.path.exists(depth_out_dir):
             os.makedirs(depth_out_dir)
         if not os.path.exists(img_gt_dir):
             os.makedirs(img_gt_dir)
+        if not os.path.exists(depth_gt_dir):
+            os.makedirs(depth_gt_dir)
+        if not os.path.exists(disp_out_dir):
+            os.makedirs(disp_out_dir)
+        if not os.path.exists(disp_gt_dir):
+            os.makedirs(disp_gt_dir)
 
-        
-        depth_out = (np.clip(255.0 / depth_out.max() * (depth_out - depth_out.min()), 0, 255)).astype(np.uint8)
+        depth_img = (np.clip(255.0 / depth_out.max() * (depth_out - depth_out.min()), 0, 255)).astype(np.uint8)
+        depth_img_gt = (np.clip(255.0 / depth_gt.max() * (depth_gt - depth_gt.min()), 0, 255)).astype(np.uint8)
         img_out = (img_out.cpu().numpy() * 255).astype(np.uint8)
         img_gt = (img_gt.cpu().numpy() * 255).astype(np.uint8)
+
+        # disparity frames for better contrast
+        disp_gt = 1 / depth_gt
+        disp_out = 1 / depth_out
+        disp_img_gt = (np.clip(255.0 / disp_gt.max() * (disp_gt - disp_gt.min()), 0, 255)).astype(np.uint8)
+        disp_img = (np.clip(255.0 / disp_out.max() * (disp_out - disp_out.min()), 0, 255)).astype(np.uint8)
+        disp_img_gt = cv2.applyColorMap(disp_img_gt, cv2.COLORMAP_INFERNO)
+        disp_img = cv2.applyColorMap(disp_img, cv2.COLORMAP_INFERNO)
+
         imageio.imwrite(os.path.join(img_out_dir, str(img_idx).zfill(4) + '.png'), img_out)
-        imageio.imwrite(os.path.join(depth_out_dir, str(img_idx).zfill(4) + '.png'), depth_out)
+        imageio.imwrite(os.path.join(depth_out_dir, str(img_idx).zfill(4) + '.png'), depth_img)
         imageio.imwrite(os.path.join(img_gt_dir, str(img_idx).zfill(4) + '.png'), img_gt)
+        imageio.imwrite(os.path.join(depth_gt_dir, str(img_idx).zfill(4) + '.png'), depth_img_gt)
+        cv2.imwrite(os.path.join(disp_gt_dir, str(img_idx).zfill(4) + '.png'), disp_img_gt)
+        cv2.imwrite(os.path.join(disp_out_dir, str(img_idx).zfill(4) + '.png'), disp_img)
 
         depth_out = depth_out[mask]
         depth_gt = depth_gt[mask]
@@ -135,12 +158,12 @@ class Eval_Images(object):
         # filename = os.path.join(img_out_dir, '{}.npy'.format(frame_id))
         # np.save(filename, img_out.cpu().numpy())
         img_dict = {'img': img_out,
-                    'depth': depth_out,
+                    'depth': depth_pred[mask],
                     'mse': mse,
                     'psnr': psnr,
                     'ssim': ssim,
                     'lpips': lpips_loss,
-                    'depth_pred': depth_out,
+                    'depth_pred': depth_pred[mask],
                     'depth_gt': depth_gt}
         return img_dict
 

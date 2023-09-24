@@ -156,6 +156,9 @@ if revert_LLFF:
     rpe_trans, rpe_rot = compute_rpe(c2ws_gt_metric.cpu().numpy(), c2ws_learned_metric.cpu().numpy())
     print(f"RPE_t: {rpe_trans:.6f} RPE_r: {(rpe_rot * 180 / np.pi):.3f}")
 
+    with open(os.path.join(out_dir, 'extraction', 'evaluation.txt'), 'a') as f:
+        f.write(f"\nV1: ate (m) = {ate:.6f}, V2: ate_t (m) = {ate_t:.6f}, ate_r (deg) = {(ate_r * 180/ np.pi):.6f}\n")
+        f.write(f"RPE_t: {rpe_trans:.6f} RPE_r: {(rpe_rot * 180 / np.pi):.3f}")
     # # save poses to file
     # pose_dest = os.path.join(out_dir, 'poses.npz')
     # np.savez(pose_dest, ids=field['img'].i_train, gt=gt_poses.cpu().numpy(), est=c2ws_est_aligned.cpu().numpy(), est_no_align=learned_poses.cpu().numpy())

@@ -99,20 +99,23 @@ if not os.path.exists(render_dir):
 imgs = []
 depths = []
 geos = []
+disps = []
 output_geo = False
 for data in train_loader:
     out = generator.generate_images(data, render_dir, c2ws, fxfy, it, output_geo)
     imgs.append(out['img'])
     depths.append(out['depth'])
     geos.append(out['geo'])
+    disps.append(out['disp'])
 imgs = np.stack(imgs, axis=0)
 depths = np.stack(depths, axis=0)
-
+disps = np.stack(disps, axis=0)
 video_out_dir = os.path.join(render_dir, 'video_out')
 if not os.path.exists(video_out_dir):
     os.makedirs(video_out_dir)
 imageio.mimwrite(os.path.join(video_out_dir, 'img.mp4'), imgs, fps=30, quality=9)
 imageio.mimwrite(os.path.join(video_out_dir, 'depth.mp4'), depths, fps=30, quality=9)
+imageio.mimwrite(os.path.join(video_out_dir, 'disp.mp4'), disps, fps=30, quality=9)
 if output_geo:  
     geos = np.stack(geos, axis=0)
     imageio.mimwrite(os.path.join(video_out_dir, 'geo.mp4'), geos, fps=30, quality=9)

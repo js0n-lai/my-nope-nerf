@@ -10,6 +10,8 @@ import numpy as np
 logger_py = logging.getLogger(__name__)
 from PIL import Image
 import imageio
+import cv2
+
 class Extract_Images(object):
     def __init__(self, renderer, cfg, use_learnt_poses=True, use_learnt_focal=True, device=None,render_type=None):
         self.points_batch_size = 100000
@@ -103,22 +105,29 @@ class Extract_Images(object):
 
         img_out_dir = os.path.join(render_dir, 'img_out')
         depth_out_dir = os.path.join(render_dir, 'depth_out')
+        disp_out_dir = os.path.join(render_dir, 'disp_out')
         
         if not os.path.exists(img_out_dir):
             os.makedirs(img_out_dir)
         if not os.path.exists(depth_out_dir):
             os.makedirs(depth_out_dir)
+        if not os.path.exists(disp_out_dir):
+            os.makedirs(disp_out_dir)
 
         filename = os.path.join(depth_out_dir, '{}.npy'.format(img_idx))
         np.save(filename, depth_out)
         
+        disp_out = 1 / depth_out
         depth_out = (np.clip(255.0 / depth_out.max() * (depth_out - depth_out.min()), 0, 255)).astype(np.uint8)
-        
+        disp_out = (np.clip(255.0 / disp_out.max() * (disp_out - disp_out.min()), 0, 255)).astype(np.uint8)
+        disp_out = cv2.applyColorMap(disp_out, cv2.COLORMAP_INFERNO)[:,:,::-1]
+
         imageio.imwrite(os.path.join(img_out_dir, str(img_idx).zfill(4) + '.png'), img_out)
         imageio.imwrite(os.path.join(depth_out_dir, str(img_idx).zfill(4) + '.png'), depth_out)
-        
+        imageio.imwrite(os.path.join(disp_out_dir, str(img_idx).zfill(4) + '.png'), disp_out)
 
         img_dict = {'img': img_out,
                     'depth': depth_out,
-                    'geo': geo_out}
+                    'geo': geo_out,
+                    'disp': disp_out}
         return img_dict
