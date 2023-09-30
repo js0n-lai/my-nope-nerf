@@ -21,7 +21,7 @@ def make_disp(data):
     writer.close()
 
 if __name__ == "__main__":
-    data = '1_clone_4'
+    data = '6_clone_turn'
     imgs = f'data/V_KITTI/{data}/images'
     writer = imageio.get_writer(os.path.join(imgs, '..', 'img.mp4'), fps=6)
     frames = [os.path.join(imgs, x) for x in sorted(os.listdir(imgs)) if '.png' in x]
@@ -42,6 +42,9 @@ if __name__ == "__main__":
 
     os.chdir(os.path.join(imgs, '..'))
     command = "mpv --lavfi-complex=\"[vid1][vid2]vstack[vo]\" depth.mp4 --external-file=img.mp4 -o out.mp4"
+    os.system(command)
+
+    command = "mpv --lavfi-complex=\"[vid1][vid2]vstack[vo]\" disp.mp4 --external-file=img.mp4 -o out1.mp4"
     os.system(command)
 
 # frames[0].save(os.path.join(imgs, 'img_out.mp4'), save_all=True, append_images=frames[1:])

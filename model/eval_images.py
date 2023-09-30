@@ -117,6 +117,8 @@ class Eval_Images(object):
         depth_gt_dir = os.path.join(render_dir, 'depth_gt_out')
         disp_out_dir = os.path.join(render_dir, 'disp_out')
         disp_gt_dir = os.path.join(render_dir, 'disp_gt_out')
+        depth_mask_dir = os.path.join(render_dir, 'depth_mask')
+
         if not os.path.exists(img_out_dir):
             os.makedirs(img_out_dir)
         if not os.path.exists(depth_out_dir):
@@ -129,9 +131,16 @@ class Eval_Images(object):
             os.makedirs(disp_out_dir)
         if not os.path.exists(disp_gt_dir):
             os.makedirs(disp_gt_dir)
+        if not os.path.exists(depth_mask_dir):
+            os.makedirs(depth_mask_dir)
 
+        import matplotlib.pyplot as plt
+        
         depth_img = (np.clip(255.0 / depth_out.max() * (depth_out - depth_out.min()), 0, 255)).astype(np.uint8)
         depth_img_gt = (np.clip(255.0 / depth_gt.max() * (depth_gt - depth_gt.min()), 0, 255)).astype(np.uint8)
+        # plt.figure()
+        # plt.scatter(depth_img.reshape(1, -1), depth_img_gt.reshape(1, -1), 1)
+        # plt.show()
         img_out = (img_out.cpu().numpy() * 255).astype(np.uint8)
         img_gt = (img_gt.cpu().numpy() * 255).astype(np.uint8)
 
@@ -143,8 +152,23 @@ class Eval_Images(object):
         disp_img_gt = cv2.applyColorMap(disp_img_gt, cv2.COLORMAP_INFERNO)
         disp_img = cv2.applyColorMap(disp_img, cv2.COLORMAP_INFERNO)
 
+        # make masked depth images to emphasise which depth pixels are used in evaluation
+        # unused pixels are green, used pixels retain their grayscale value
+        depth_gt_masked = depth_img_gt.copy()
+        depth_gt_masked[mask==0] = 0
+        depth_gt_masked_g = depth_img_gt.copy()
+        depth_gt_masked_g[mask==0] = 255
+        depth_gt_masked = np.stack((depth_gt_masked, depth_gt_masked_g, depth_gt_masked), axis=-1)
+        depth_out_masked = depth_img.copy()
+        depth_out_masked_g = depth_img.copy()
+        depth_out_masked[mask==0] = 0
+        depth_out_masked_g[mask==0] = 255
+        depth_out_masked = np.stack((depth_out_masked, depth_out_masked_g, depth_out_masked), axis=-1)
+
         imageio.imwrite(os.path.join(img_out_dir, str(img_idx).zfill(4) + '.png'), img_out)
         imageio.imwrite(os.path.join(depth_out_dir, str(img_idx).zfill(4) + '.png'), depth_img)
+        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '_gt.png'), depth_gt_masked)
+        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '.png'), depth_out_masked)
         imageio.imwrite(os.path.join(img_gt_dir, str(img_idx).zfill(4) + '.png'), img_gt)
         imageio.imwrite(os.path.join(depth_gt_dir, str(img_idx).zfill(4) + '.png'), depth_img_gt)
         cv2.imwrite(os.path.join(disp_gt_dir, str(img_idx).zfill(4) + '.png'), disp_img_gt)
@@ -163,7 +187,7 @@ class Eval_Images(object):
                     'psnr': psnr,
                     'ssim': ssim,
                     'lpips': lpips_loss,
-                    'depth_pred': depth_pred[mask],
+                    'depth_pred': depth_out,
                     'depth_gt': depth_gt}
         return img_dict
 

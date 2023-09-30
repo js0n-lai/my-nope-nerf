@@ -70,11 +70,13 @@ def eval(cfg):
         img_list = train_dataset['img'].img_list
         loader = train_loader
         render_dir = os.path.join(generation_dir, 'eval_trained')
+        dataset = train_dataset
     else:
         N_imgs = eval_dataset['img'].N_imgs
         img_list = eval_dataset['img'].img_list
         loader = eval_loader
         render_dir = os.path.join(generation_dir, 'eval', init_method)
+        dataset = eval_dataset
     
     
 
@@ -152,7 +154,6 @@ def eval(cfg):
         os.makedirs(render_dir)
 
     imgs = []
-    depths = []
     eval_mse_list = []
     eval_psnr_list = []
     eval_ssim_list = []
@@ -166,7 +167,6 @@ def eval(cfg):
     for data in loader:
         out = generator.eval_images(data, render_dir, fxfy, lpips_metric, logger=logger, min_depth=min_depth, max_depth=max_depth)
         imgs.append(out['img'])
-        depths.append(out['depth'])
         eval_mse_list.append(out['mse'])
         eval_psnr_list.append(out['psnr'])
         eval_ssim_list.append(out['ssim'])
@@ -185,16 +185,17 @@ def eval(cfg):
     print("{0:.2f}".format(mean_psnr),'&' "{0:.2f}".format(mean_ssim), '&', "{0:.2f}".format(mean_lpips))     
    
     if cfg['extract_images']['eval_depth']:
+        breakpoint()
         depth_errors = []
         depth_errors_actual = []
         ratio = np.median(np.concatenate(depth_gts)) / \
                         np.median(np.concatenate(depth_preds))
         print(f"Scale = {ratio}")
 
-        do_actual = 'reverse_gt' in dir(train_dataset['img'])
+        do_actual = 'reverse_gt' in dir(dataset['img'])
         if do_actual:
-            ratio_actual = train_dataset['img'].reverse_gt['sc']
-            sc_spherify = train_dataset['img'].reverse_gt.get('sc_spherify', 1)
+            ratio_actual = dataset['img'].reverse_gt['sc']
+            sc_spherify = dataset['img'].reverse_gt.get('sc_spherify', 1)
             ratio_actual *= sc_spherify
             ratio_actual = 1 / ratio_actual
             print(f"Actual scale = {ratio_actual}")
