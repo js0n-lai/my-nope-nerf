@@ -1,5 +1,5 @@
 # Depth-Guided Neural Scene Reconstruction for Autonomous Vehicles
-**[Data](https://drive.google.com/drive/folders/1JZ6EH5a1oL-0YeOxjlfeybh-einl_1On?usp=sharing) | [PDF PENDING]**
+**[Data](https://drive.google.com/drive/folders/1JZ6EH5a1oL-0YeOxjlfeybh-einl_1On?usp=sharing) | [Pretrained Models](https://drive.google.com/drive/folders/1FnjRGaPmpPhLi-wNK3sWmvlDSJtWYUST?usp=sharing) | [PDF PENDING]**
 
 Jason Lai, supervised by Viorela Ila
 
@@ -27,7 +27,7 @@ conda activate nope-nerf
 
 ## Data and Preprocessing
 1. [Virtual KITTI Subset](https://drive.google.com/drive/folders/1JZ6EH5a1oL-0YeOxjlfeybh-einl_1On?usp=sharing):
-Our preprocessed Virtual KITTI data contains the 3 scenes shown in the paper. Each scene contains images, monocular depth estimations from DPT and poses. There are two variants for each scene - one with Virtual KITTI poses and another with COLMAP poses. You can download and unzip it to `data` directory.
+Our preprocessed Virtual KITTI data contains the 3 scenes shown in the paper. Each scene contains images, monocular depth estimations from DPT and poses. There are two variants for each scene - one with Virtual KITTI poses and another with COLMAP poses. Numbering of each scene follows the Appendix in the pdf. You can download and unzip it to the `data` directory.
 
 2. If you want to use your own Virtual KITTI sequence, visit [Virtual KITTI](https://europe.naverlabs.com/research/computer-vision/proxy-virtual-worlds-vkitti-1/) to acquire the dataset and extract all archives to the same root. You can then use the provided `get_kittivirtual.py` script to acquire the desired sequence and generate config files in `configs/V_KITTI`. Usage can be determined by running
 ```
@@ -62,6 +62,10 @@ tensorboard --logdir_spec <name1>:out/V_KITTI/<X1>/logs,<name2>:out/V_KITTI/<X2>
 ```
 
 For available training options, please take a look at `configs/default.yaml` or the provided Virtual KITTI examples.
+
+2. [Pretrained Models](https://drive.google.com/drive/folders/1FnjRGaPmpPhLi-wNK3sWmvlDSJtWYUST?usp=sharing)
+Our pretrained models are numbered according to the sample Virtual KITTI config files. Simply download the zip and extract the contents into the `out/` directory.
+
 ## Evaluation
 1. Evaluate image quality and depth:
 ```
