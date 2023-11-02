@@ -1,0 +1,12 @@
+dataloading:
+  customized_focal: true
+  customized_poses: false
+  load_colmap_poses: true
+  path: data/V_KITTI
+  resize_factor: 2
+  scene:
+  - straight_colmap
+depth:
+  type: DPT
+training:
+  mode: all
