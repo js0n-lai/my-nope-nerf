@@ -1,0 +1,37 @@
+dataloading:
+  customized_focal: true
+  customized_poses: false
+  load_colmap_poses: true
+  path: data/V_KITTI
+  random_ref: 1
+  resize_factor: 2
+  scene:
+  - t_junction
+  with_depth: true
+depth:
+  depth_loss_type: l1
+  type: None
+distortion:
+  learn_distortion: true
+  learn_shift: false
+  learn_scale: false
+extract_images:
+  bspline_degree: 100
+  eval_depth: true
+  resolution:
+  - 188
+  - 621
+  traj_option: interp
+pose:
+  init_R_only: false
+  init_pose: true
+  init_pose_type: colmap
+  learn_R: false
+  learn_focal: false
+  learn_pose: true
+  learn_t: false
+  update_focal: true
+training:
+  match_method: dense
+  out_dir: out/V_KITTI/t_junction_d3
+  with_ssim: false
