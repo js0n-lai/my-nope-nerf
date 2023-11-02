@@ -63,7 +63,7 @@ tensorboard --logdir_spec <name1>:out/V_KITTI/<X1>/logs,<name2>:out/V_KITTI/<X2>
 
 For available training options, please take a look at `configs/default.yaml` or the provided Virtual KITTI examples.
 
-2. [Pretrained Models](https://drive.google.com/drive/folders/1FnjRGaPmpPhLi-wNK3sWmvlDSJtWYUST?usp=sharing)
+2. [Pretrained Models](https://drive.google.com/drive/folders/1FnjRGaPmpPhLi-wNK3sWmvlDSJtWYUST?usp=sharing):
 Our pretrained models are numbered according to the sample Virtual KITTI config files. Simply download the zip and extract the contents into the `out/` directory.
 
 ## Evaluation
