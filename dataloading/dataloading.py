@@ -74,7 +74,7 @@ def get_data_fields(cfg, mode='train'):
                 crop_size=cfg['dataloading']['crop_size'], random_ref=cfg['dataloading']['random_ref'], norm_depth=cfg['dataloading']['norm_depth'],
                 load_colmap_poses=cfg['dataloading']['load_colmap_poses'], sample_rate=cfg['dataloading']['sample_rate'],
                 bd_factor=cfg['dataloading']['bd_factor'], sparsify_depth=cfg['dataloading']['sparsify_depth'], sparsify_depth_pattern=cfg['dataloading']['sparsify_depth_pattern'],
-                out_dir=os.path.basename(cfg['training'].get('out_dir', '')))
+                out_dir=os.path.basename(cfg['training'].get('out_dir', '')), show_pose_only=cfg['dataloading']['show_pose_only'])
     else:
         print(dataset_name, 'does not exist')
     fields['img'] = img_field

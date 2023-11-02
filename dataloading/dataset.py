@@ -20,7 +20,8 @@ class DataField(object):
                  load_ref_img=False,customized_poses=False,
                  customized_focal=False,resize_factor=2, depth_net='dpt',crop_size=0, 
                  random_ref=False,norm_depth=False,load_colmap_poses=True, sample_rate=8,
-                 bd_factor=0.75, sparsify_depth=False, sparsify_depth_pattern=[1, 0, 1, 0], out_dir=None, **kwargs):
+                 bd_factor=0.75, sparsify_depth=False, sparsify_depth_pattern=[1, 0, 1, 0],
+                 out_dir=None, show_pose_only=False, **kwargs):
         """load images, depth maps, etc.
         Args:
             model_path (str): path of dataset
@@ -58,40 +59,6 @@ class DataField(object):
         if load_colmap_poses:
             c2ws_colmap, H, W, focal, reverse_init = self.make_c2ws_from_llff(poses, bds, spherify, True, False, bd_factor)
             self.reverse_init = reverse_init
-            # # pdb.set_trace()
-            # # vis_poses(poses.transpose([2, 0, 1]), 'just loaded', 1)
-
-            # poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
-            # # vis_poses(poses.transpose([2, 0, 1]), 'transform from (x,y,z) --> (y, -x, z)', 1)
-
-            # poses = np.moveaxis(poses, -1, 0).astype(np.float32)
-            # # vis_poses(poses, 'move axis', 1)
-
-            # bds = np.moveaxis(bds, -1, 0).astype(np.float32)
-            # bd_factor = 0.75
-            # # Rescale if bd_factor is provided
-            # sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
-            # poses[:,:3,3] *= sc
-            # # vis_poses(poses, f'rescaled t by {sc}', 1)
-
-            # bds *= sc
-            # poses = recenter_poses(poses)
-            # # vis_poses(poses, 'recentered', 1)
-
-            # if spherify:
-            #     poses, render_poses, bds = spherify_poses(poses, bds)
-            #     # vis_poses(poses, 'spherify')
-            # input_poses = poses.astype(np.float32)
-            # hwf = input_poses[0,:3,-1]
-            # self.hwf = input_poses[:,:3,:]
-            # input_poses = input_poses[:,:3,:4]
-            # H, W, focal = hwf
-            # H, W = int(H), int(W)
-            # pdb.set_trace()
-            # poses_tensor = torch.from_numpy(input_poses)
-            # bottom = torch.FloatTensor([0, 0, 0, 1]).unsqueeze(0)
-            # bottom = bottom.repeat(poses_tensor.shape[0], 1, 1)
-            # c2ws_colmap = torch.cat([poses_tensor, bottom], 1)
 
         imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
         imgs = np.transpose(imgs, (0, 3, 1, 2))
@@ -112,7 +79,6 @@ class DataField(object):
         fx = fx / focal_crop_factor
         fy = fy / focal_crop_factor
         
-        
         self.H, self.W, self.focal = h, w, fx
         self.K = np.array([[2*fx/w, 0, 0, 0], 
             [0, -2*fy/h, 0, 0],
@@ -126,7 +92,6 @@ class DataField(object):
         image_list_train = [img_names[i] for i in i_train]
         image_list_test = [img_names[i] for i in i_test]
         print('test set: ', image_list_test)
-        # pdb.set_trace()
 
         if customized_poses:
             c2ws_gt = np.load(os.path.join(load_dir, 'gt_poses.npz'))['poses'].astype(np.float32)
@@ -146,20 +111,20 @@ class DataField(object):
         self.c2ws_gt_llff = c2ws_gt_llff
         self.reverse_gt = reverse_gt
 
-        # if c2ws is not None:
-        #     import open3d as o3d
-        #     from utils_poses.vis_cam_traj import draw_camera_frustum_geometry
-        #     init = draw_camera_frustum_geometry(c2ws_colmap.cpu().numpy(), H, W, fx, fy, 0.1, np.array([29, 215, 158], dtype=np.float32) / 255, coord='opengl')
-        #     gt = draw_camera_frustum_geometry(c2ws_gt_llff.cpu().numpy(), H, W, fx, fy, 0.1, np.array([255, 0, 0], dtype=np.float32) / 255, coord='opengl')
-        #     viewer = o3d.visualization.Visualizer()
-        #     viewer.create_window()
-        #     viewer.add_geometry(init)
-        #     viewer.add_geometry(gt)
-        #     opt = viewer.get_render_option()
-        #     opt.show_coordinate_frame = True
+        if show_pose_only and c2ws is not None:
+            import open3d as o3d
+            from utils_poses.vis_cam_traj import draw_camera_frustum_geometry
+            init = draw_camera_frustum_geometry(c2ws_colmap.cpu().numpy(), H, W, fx, fy, 0.1, np.array([29, 215, 158], dtype=np.float32) / 255, coord='opengl')
+            gt = draw_camera_frustum_geometry(c2ws_gt_llff.cpu().numpy(), H, W, fx, fy, 0.1, np.array([255, 0, 0], dtype=np.float32) / 255, coord='opengl')
+            viewer = o3d.visualization.Visualizer()
+            viewer.create_window()
+            viewer.add_geometry(init)
+            viewer.add_geometry(gt)
+            opt = viewer.get_render_option()
+            opt.show_coordinate_frame = True
 
-        #     viewer.run()
-        #     exit()
+            viewer.run()
+            exit()
         
         self.N_imgs_train = len(i_train)
         self.N_imgs_test = len(i_test)
@@ -183,9 +148,7 @@ class DataField(object):
             self.c2ws = c2ws[idx_list]
         if load_colmap_poses:
             self.c2ws_colmap = c2ws_colmap[i_train]
-        
         try:
-            # self.gt_depth = load_gt_depths(img_names, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
             self.gt_depth = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
         except AttributeError:
             self.gt_depth = None
@@ -226,7 +189,6 @@ class DataField(object):
         return mask
 
     def make_c2ws_from_llff(self, poses, bds, spherify, overwrite_hwf=False, visualise=False, bd_factor=0.75):
-        # pdb.set_trace()
         if visualise:
             vis_poses(poses.transpose([2, 0, 1]), 'just loaded', 1)
 
@@ -239,8 +201,6 @@ class DataField(object):
             vis_poses(poses, 'move axis', 1)
 
         bds = np.moveaxis(bds, -1, 0).astype(np.float32)
-        # bd_factor = 0.75
-        # bd_factor = None
 
         # Rescale if bd_factor is provided
         sc = 1. if bd_factor == 'None' else 1./(bds.min() * bd_factor)
@@ -252,7 +212,6 @@ class DataField(object):
         poses, poses_avg = recenter_poses(poses)
         if visualise:
             vis_poses(poses, 'recentered', 1)
-        # breakpoint()
 
         reverse = dict()
         reverse['sc'] = sc
@@ -303,12 +262,6 @@ class DataField(object):
                 ref_idx = idx + ran_idx
         image = self.imgs[ref_idx]
 
-        # # store depths
-        # if self.gt_depth is not None:
-        #     gt_depth = self.gt_depth[ref_idx]
-        #     data['gt_depths'] = gt_depth
-        
-        # data['ref_depth_mask'] = self.depth_mask[ref_idx]
         if self.dpt_depth is not None:
             dpt = self.dpt_depth[ref_idx]
             data['ref_dpts'] = dpt
@@ -325,8 +278,6 @@ class DataField(object):
         
         data['ref_imgs'] = image
         data['ref_idxs'] = ref_idx
-
-        # store gt pose
         data['ref_pose_gt'] = self.c2ws_gt_llff[ref_idx]
 
 
