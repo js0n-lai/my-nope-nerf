@@ -46,6 +46,7 @@ def get_camera_frustum_opengl_coord(H, W, fx, fy, W2C, frustum_length=0.5, color
     half_h = frustum_length * np.tan(np.deg2rad(vfov / 2.))
 
     # build view frustum in camera space in homogenous coordinate (5, 4)
+    # use asymmetric frustum to ensure unambiguous orientation
     frustum_points = np.array([[0., 0., 0., 1.0],                          # frustum origin
                                [-2*half_w, half_h,  -frustum_length, 1.0],   # top-left image corner
                                [half_w, half_h,   -frustum_length, 1.0],   # top-right image corner
@@ -116,21 +117,13 @@ def draw_camera_frustum_geometry(c2ws, H, W, fx=600.0, fy=600.0, frustum_length=
 
     frustum_list = []
     if coord == 'opengl':
-        frustum_list.append(get_camera_frustum_opengl_coord(H, W, fx, fy,
-                                                                W2C=np.linalg.inv(c2ws[0]),
-                                                                frustum_length=frustum_length,
-                                                                color=np.array([1, 0, 1])))
-        for i in range(1, N):
+        for i in range(N):
             frustum_list.append(get_camera_frustum_opengl_coord(H, W, fx, fy,
                                                                 W2C=np.linalg.inv(c2ws[i]),
                                                                 frustum_length=frustum_length,
                                                                 color=color[i]))
     elif coord == 'opencv':
-        frustum_list.append(get_camera_frustum_opencv_coord(H, W, fx, fy,
-                                                                W2C=np.linalg.inv(c2ws[0]),
-                                                                frustum_length=frustum_length,
-                                                                color=np.array([1, 0, 1])))
-        for i in range(1, N):
+        for i in range(N):
             frustum_list.append(get_camera_frustum_opencv_coord(H, W, fx, fy,
                                                                 W2C=np.linalg.inv(c2ws[i]),
                                                                 frustum_length=frustum_length,

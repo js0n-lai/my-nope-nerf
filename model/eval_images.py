@@ -1,4 +1,5 @@
 import os
+import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -37,17 +38,14 @@ class Eval_Images(object):
         batch_size, _, h, w = img.shape
         depth_img = data.get('img.depth', torch.ones(batch_size, h, w))
         depth_gt = data.get('img.gt_depths')
-        # depth_mask = data.get('img.depth_mask')
         img_idx = data.get('img.idx')
         camera_mat = data.get('img.camera_mat').to(device)
         scale_mat = data.get('img.scale_mat').to(device)
 
-        # return (img, depth_img, camera_mat, scale_mat, img_idx, depth_gt, depth_mask)
         return (img, depth_img, camera_mat, scale_mat, img_idx, depth_gt)
 
-    def eval_images(self, data, render_dir, fxfy, lpips_vgg_fn, logger, min_depth=0.1, max_depth=20, it=0):
+    def eval_images(self, data, render_dir, fxfy, lpips_vgg_fn, logger, min_depth=0.1, max_depth=20, it=0, sc=1, show_errors=False):
         self.renderer.eval()
-        # (img_gt, depth, camera_mat, scale_mat, img_idx, depth_gt, depth_mask) = self.process_data_dict(data)
         (img_gt, depth, camera_mat, scale_mat, img_idx, depth_gt) = self.process_data_dict(data)
         img_idx = int(img_idx)
         img_gt = img_gt.squeeze(0).permute(1, 2, 0)
@@ -57,7 +55,6 @@ class Eval_Images(object):
         else:
             print('No GT depths available, using input depths')
             depth_gt = depth.squeeze(0).numpy()
-        mask = (depth_gt > min_depth) * (depth_gt < max_depth)
 
         if self.use_learnt_poses:
             c2w = self.c2ws[img_idx]
@@ -94,10 +91,7 @@ class Eval_Images(object):
             depth_pred = depth_pred.view(h, w).detach().cpu().numpy()
             depth_out = depth_pred
             
-
         # mse for the entire image
-        # import pdb
-        # pdb.set_trace()
         mse = F.mse_loss(img_out, img_gt).item()
         psnr = mse2psnr(mse)
         ssim = pytorch_ssim.ssim(img_out.permute(2, 0, 1).unsqueeze(0), img_gt.permute(2, 0, 1).unsqueeze(0)).item()
@@ -109,6 +103,7 @@ class Eval_Images(object):
        
         
         gt_height, gt_width = depth_gt.shape[:2]
+        depth_out *= sc
         depth_out = cv2.resize(depth_out, (gt_width, gt_height), interpolation=cv2.INTER_AREA)
         
         img_out_dir = os.path.join(render_dir, 'img_out')
@@ -133,14 +128,9 @@ class Eval_Images(object):
             os.makedirs(disp_gt_dir)
         if not os.path.exists(depth_mask_dir):
             os.makedirs(depth_mask_dir)
-
-        import matplotlib.pyplot as plt
         
         depth_img = (np.clip(255.0 / depth_out.max() * (depth_out - depth_out.min()), 0, 255)).astype(np.uint8)
         depth_img_gt = (np.clip(255.0 / depth_gt.max() * (depth_gt - depth_gt.min()), 0, 255)).astype(np.uint8)
-        # plt.figure()
-        # plt.scatter(depth_img.reshape(1, -1), depth_img_gt.reshape(1, -1), 1)
-        # plt.show()
         img_out = (img_out.cpu().numpy() * 255).astype(np.uint8)
         img_gt = (img_gt.cpu().numpy() * 255).astype(np.uint8)
 
@@ -152,43 +142,77 @@ class Eval_Images(object):
         disp_img_gt = cv2.applyColorMap(disp_img_gt, cv2.COLORMAP_INFERNO)
         disp_img = cv2.applyColorMap(disp_img, cv2.COLORMAP_INFERNO)
 
-        # make masked depth images to emphasise which depth pixels are used in evaluation
-        # unused pixels are green, used pixels retain their grayscale value
-        depth_gt_masked = depth_img_gt.copy()
-        depth_gt_masked[mask==0] = 0
-        depth_gt_masked_g = depth_img_gt.copy()
-        depth_gt_masked_g[mask==0] = 255
-        depth_gt_masked = np.stack((depth_gt_masked, depth_gt_masked_g, depth_gt_masked), axis=-1)
-        depth_out_masked = depth_img.copy()
-        depth_out_masked_g = depth_img.copy()
-        depth_out_masked[mask==0] = 0
-        depth_out_masked_g[mask==0] = 255
-        depth_out_masked = np.stack((depth_out_masked, depth_out_masked_g, depth_out_masked), axis=-1)
-
         imageio.imwrite(os.path.join(img_out_dir, str(img_idx).zfill(4) + '.png'), img_out)
         imageio.imwrite(os.path.join(depth_out_dir, str(img_idx).zfill(4) + '.png'), depth_img)
-        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '_gt.png'), depth_gt_masked)
-        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '.png'), depth_out_masked)
         imageio.imwrite(os.path.join(img_gt_dir, str(img_idx).zfill(4) + '.png'), img_gt)
         imageio.imwrite(os.path.join(depth_gt_dir, str(img_idx).zfill(4) + '.png'), depth_img_gt)
         cv2.imwrite(os.path.join(disp_gt_dir, str(img_idx).zfill(4) + '.png'), disp_img_gt)
         cv2.imwrite(os.path.join(disp_out_dir, str(img_idx).zfill(4) + '.png'), disp_img)
 
+        mask_rendered = (depth_out >= min_depth) & (depth_out <= max_depth)
+        mask_gt = (depth_gt >= min_depth) & (depth_gt <= max_depth)
+        mask = mask_rendered | mask_gt
+
+        tp = (mask_rendered & mask_gt).reshape(1, -1)
+        tn = (np.logical_not(mask_rendered) & np.logical_not(mask_gt)).reshape(1, -1)
+        fp = (mask_rendered & np.logical_not(mask_gt)).reshape(1, -1)
+        fn = (np.logical_not(mask_rendered) & mask_gt). reshape(1, -1)
+
+        num_pixels = (np.arange(depth_gt.shape[0] * depth_gt.shape[1])).reshape(1, -1)
+
+        # show distribution of depth errors if set
+        if show_errors:
+            plt.figure()
+            x = (depth_gt - depth_out).reshape(1, -1)
+            
+            plt.xlim(num_pixels[0,0], num_pixels[0,-1])
+            plt.scatter(num_pixels[tp], x[tp], 1, 'r')
+            plt.scatter(num_pixels[tn], x[tn], 1, 'g')
+            plt.scatter(num_pixels[fp], x[fp], 1, 'b')
+            plt.scatter(num_pixels[fn], x[fn], 1, 'k')
+            plt.legend(['True Positive', 'True Negative', 'False Positive', 'False Negative'])
+            plt.xlabel('Pixel Index')
+            plt.ylabel('GT Depth - Predicted Depth (m)')
+            plt.title('Classification of Depth Errors')
+            plt.savefig(os.path.join(render_dir, str(img_idx).zfill(4) + '_conf.png'))
+
+        # make masked depth images to emphasise which depth pixels are used in evaluation
+        # unused pixels are green, used pixels retain their grayscale value
+        depth_gt_masked = depth_img_gt.copy()
+        depth_gt_masked[mask == 0] = 0
+        depth_gt_masked_g = depth_img_gt.copy()
+        depth_gt_masked_g[mask == 0] = 255
+        depth_gt_masked = np.stack((depth_gt_masked, depth_gt_masked_g, depth_gt_masked), axis=-1)
+
+        depth_out_masked = depth_img.copy()
+        depth_out_masked_g = depth_img.copy()
+        depth_out_masked[mask == 0] = 0
+        depth_out_masked_g[mask == 0] = 255
+        depth_out_masked = np.stack((depth_out_masked, depth_out_masked_g, depth_out_masked), axis=-1)
+
+        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '_mask_rendered.png'), (255 * mask_rendered).astype(np.uint8))
+        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '_mask_gt.png'), (255 * mask_gt).astype(np.uint8))
+        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '_mask_combined.png'), (255 * mask).astype(np.uint8))
+        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '_gt.png'), depth_gt_masked)
+        imageio.imwrite(os.path.join(depth_mask_dir, str(img_idx).zfill(4) + '.png'), depth_out_masked)
+
         depth_out = depth_out[mask]
         depth_gt = depth_gt[mask]
+
         # frame_id = self.img_list[img_idx].split('.')[0]
         # filename = os.path.join(depth_out_dir, '{}_depth.npy'.format(frame_id))
         # np.save(filename, depth_out)
         # filename = os.path.join(img_out_dir, '{}.npy'.format(frame_id))
         # np.save(filename, img_out.cpu().numpy())
+
         img_dict = {'img': img_out,
-                    'depth': depth_pred[mask],
                     'mse': mse,
                     'psnr': psnr,
                     'ssim': ssim,
                     'lpips': lpips_loss,
                     'depth_pred': depth_out,
-                    'depth_gt': depth_gt}
+                    'depth_gt': depth_gt,
+                    'conf_mat': np.array([[np.sum(tp), np.sum(fn)], [np.sum(fp), np.sum(tn)]]) / num_pixels[0,-1]}
         return img_dict
 
     

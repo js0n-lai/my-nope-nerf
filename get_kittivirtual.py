@@ -3,7 +3,6 @@ import shutil
 import argparse
 import numpy as np
 import yaml
-import pdb
 import pandas as pd
 import cv2
 from scipy.spatial.transform import Rotation as R
@@ -23,7 +22,6 @@ def has_met_movement_thresholds(x, y, thresh_rot, thresh_translate):
     r_y = R.from_matrix(y[:,:-1])
     d_rot = np.abs(r_x.magnitude() - r_y.magnitude())
     d_translate = np.linalg.norm(x[:,3] - y[:,3])
-    # print(d_rot, d_translate)
 
     if thresh_rot is not None and d_rot >= thresh_rot:
         return True
@@ -149,7 +147,8 @@ def make_poses(src, dest, frames, make_gt=False, make_colmap=False):
         rot = R.from_rotvec(x_local*np.pi).as_matrix()
         r = np.matmul(rot, r)
 
-        # make world coordinate system (right, up, backward) instead of (forward, down, left) 
+        # make world coordinate system (right, up, backward) instead of (forward, down, left)
+        # can be omitted since NeRFs are agnostic to the world coordinate system
         r_gl = np.matmul(np.linalg.inv(P_gl), r)
         t_gl = np.matmul(np.linalg.inv(P_gl), t) 
         x[:3,:3] = r_gl
@@ -162,7 +161,7 @@ def make_poses(src, dest, frames, make_gt=False, make_colmap=False):
         x[:3,-1] = t_gl
         result_llff[i] = x
 
-        # get depth range - given in cm
+        # get depth range - convert from cm to m
         depth = cv2.imread(os.path.join(depth_src, f"{str(f).zfill(5)}.png"), cv2.IMREAD_UNCHANGED)
         height, width = depth.shape        
 
@@ -172,7 +171,6 @@ def make_poses(src, dest, frames, make_gt=False, make_colmap=False):
         llff_flattened = np.hstack((llff_35.flatten(), depth_min, depth_max))
         result[i] = llff_flattened
 
-    # pdb.set_trace()
     # draw_camera_frustum_geometry(result_llff, height, width, K[0,0], K[1,1], frustum_length=0.5, coord='opengl',draw_now=True)
     # draw_camera_frustum_geometry(result_gl, height, width, K[0,0], K[1,1], coord='opengl', draw_now=True)
     # draw_camera_frustum_geometry(result_orig, height, width, K[0,0], K[1,1], coord='opengl', draw_now=True)

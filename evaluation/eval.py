@@ -22,6 +22,7 @@ from model.common import mse2psnr
 from torch.utils.tensorboard import SummaryWriter
 from sklearn import linear_model
 
+# for making grayscale depth frames
 def clip_depths(x):
     return np.clip(255.0 / x.max() * (x - x.min()), 0.1, 1)
 
@@ -78,8 +79,6 @@ def eval(cfg):
         render_dir = os.path.join(generation_dir, 'eval', init_method)
         dataset = eval_dataset
     
-    
-
     if use_learnt_focal:
         focal_net = mdl.LearnFocal(cfg['pose']['learn_focal'], cfg['pose']['fx_only'], order=cfg['pose']['focal_order'])
         checkpoint_io_focal = mdl.CheckpointIO(out_dir, model=focal_net)
@@ -125,6 +124,7 @@ def eval(cfg):
             eval_pose_cfg = cfg['eval_pose']
             trainer = mdl.Trainer_pose(nope_nerf, eval_pose_cfg, device=device, optimizer_pose=optimizer_eval_pose, 
                                     pose_param_net=eval_pose_param_net, focal_net=focal_net)
+            # uncomment below to bypass test-time optimisation
             # for epoch_i in range(0):
             for epoch_i in tqdm(range(num_epoch), desc='optimising eval'):
                 L2_loss_epoch = []
@@ -160,12 +160,23 @@ def eval(cfg):
     eval_lpips_list = []
     depth_gts = []
     depth_preds = []
+    conf_mats = []
+
     # init lpips loss.
     lpips_metric = lpips_lib.LPIPS(net='vgg').to(device)
     min_depth = cfg['eval_pose']['depth_range'][0]
     max_depth = cfg['eval_pose']['depth_range'][1]
+
+    # convert preprocessed poses back to original scale
+    if 'reverse_gt' in dir(dataset['img']):
+        ratio = 1 / (dataset['img'].reverse_gt.get('sc', 1) * dataset['img'].reverse_gt.get('sc_spherify', 1))
+    else:
+        ratio = 1
+
+    first = True
     for data in loader:
-        out = generator.eval_images(data, render_dir, fxfy, lpips_metric, logger=logger, min_depth=min_depth, max_depth=max_depth)
+        out = generator.eval_images(data, render_dir, fxfy, lpips_metric, logger=logger, min_depth=min_depth, max_depth=max_depth, sc=ratio, show_errors=first)
+        first = False
         imgs.append(out['img'])
         eval_mse_list.append(out['mse'])
         eval_psnr_list.append(out['psnr'])
@@ -173,6 +184,7 @@ def eval(cfg):
         eval_lpips_list.append(out['lpips'])
         depth_preds.append(out['depth_pred'].astype(np.float32))
         depth_gts.append(out['depth_gt'])
+        conf_mats.append(out['conf_mat'])
 
     mean_mse = np.mean(eval_mse_list)
     mean_psnr = np.mean(eval_psnr_list)
@@ -185,55 +197,27 @@ def eval(cfg):
     print("{0:.2f}".format(mean_psnr),'&' "{0:.2f}".format(mean_ssim), '&', "{0:.2f}".format(mean_lpips))     
    
     if cfg['extract_images']['eval_depth']:
-        breakpoint()
         depth_errors = []
-        depth_errors_actual = []
-        ratio = np.median(np.concatenate(depth_gts)) / \
-                        np.median(np.concatenate(depth_preds))
-        print(f"Scale = {ratio}")
 
-        do_actual = 'reverse_gt' in dir(dataset['img'])
-        if do_actual:
-            ratio_actual = dataset['img'].reverse_gt['sc']
-            sc_spherify = dataset['img'].reverse_gt.get('sc_spherify', 1)
-            ratio_actual *= sc_spherify
-            ratio_actual = 1 / ratio_actual
-            print(f"Actual scale = {ratio_actual}")
         for i in range(len(depth_preds)):
             gt_depth = depth_gts[i]
             pred_depth = depth_preds[i]
-
-            pred_depth = pred_depth * ratio
-            pred_depth[pred_depth < min_depth] = min_depth
-            pred_depth[pred_depth > max_depth] = max_depth
             depth_errors.append(compute_errors(gt_depth, pred_depth))
 
-            if do_actual:
-                pred_depth_actual = depth_preds[i] * ratio_actual
-                pred_depth_actual[pred_depth_actual < min_depth] = min_depth
-                pred_depth_actual[pred_depth_actual > max_depth] = max_depth
-                depth_errors_actual.append(compute_errors(gt_depth, pred_depth_actual))
-
-        mean_errors = np.array(depth_errors).mean(0)                                                                                       
+        mean_errors = np.array(depth_errors).mean(0)
+        mean_conf_mat = np.array(conf_mats).mean(0)                                                                                       
         print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
         print(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
+        print(f"tp: {mean_conf_mat[0,0]}, fn: {mean_conf_mat[0,1]}, fp: {mean_conf_mat[1,0]}, tn: {mean_conf_mat[1,1]}")
         print("\n-> Done!")
-
-        if do_actual:
-            mean_errors_actual = np.array(depth_errors_actual).mean(0)                                                                                       
-            print("\n  " + ("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3"))
-            print(("&{: 8.3f}  " * 7).format(*mean_errors_actual.tolist()) + "\\\\")
-            print("\n-> Done!")
 
         with open(os.path.join(generation_dir, 'evaluation.txt'), 'a') as f:
             f.writelines('Mean MSE: {0:.2f}, PSNR: {1:.2f}, SSIM: {2:.2f}, LPIPS {3:.2f}\n'.format(mean_mse, mean_psnr,
                                                                                     mean_ssim, mean_lpips))
             f.writelines(("{:>8} | " * 7).format("abs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3") + '\n')
-            f.writelines(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\")
-
-            if do_actual:
-                f.writelines(("{:>8} | " * 7).format("\nabs_rel", "sq_rel", "rmse", "rmse_log", "a1", "a2", "a3") + '\n')
-                f.writelines(("&{: 8.3f}  " * 7).format(*mean_errors_actual.tolist()) + "\\\\")
+            f.writelines(("&{: 8.3f}  " * 7).format(*mean_errors.tolist()) + "\\\\\n")
+            f.writelines(f"\ntp: {mean_conf_mat[0,0]}, fn: {mean_conf_mat[0,1]}, fp: {mean_conf_mat[1,0]}, tn: {mean_conf_mat[1,1]}\n")
+            f.writelines("\n-> Done!")
 
     imgs = np.stack(imgs, axis=0)
     video_out_dir = os.path.join(render_dir, 'video_out')
