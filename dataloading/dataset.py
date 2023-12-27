@@ -15,12 +15,13 @@ class DataField(object):
     def __init__(self, model_path,
                  transform=None, 
                  with_camera=False, 
-                with_depth=False,
+                 with_depth=False,
                  use_DPT=False, scene_name=[' '], mode='train', spherify=False, 
                  load_ref_img=False,customized_poses=False,
                  customized_focal=False,resize_factor=2, depth_net='dpt',crop_size=0, 
                  random_ref=False,norm_depth=False,load_colmap_poses=True, sample_rate=8,
                  bd_factor=0.75, sparsify_depth=False, sparsify_depth_pattern=[1, 0, 1, 0],
+                 noise_mean=0, noise_std=0, offset_x=0, offset_y=0,
                  out_dir=None, show_pose_only=False, **kwargs):
         """load images, depth maps, etc.
         Args:
@@ -51,7 +52,6 @@ class DataField(object):
         self.ref_img = load_ref_img
         self.random_ref = random_ref
         self.sample_rate = sample_rate
-        
         load_dir = os.path.join(model_path, scene_name[0])
         if crop_size!=0:
             depth_net = depth_net + '_' + str(crop_size)
@@ -148,6 +148,8 @@ class DataField(object):
             self.c2ws = c2ws[idx_list]
         if load_colmap_poses:
             self.c2ws_colmap = c2ws_colmap[i_train]
+
+        # dense and noise-free GT depths
         try:
             self.gt_depth = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
         except AttributeError:
@@ -157,18 +159,53 @@ class DataField(object):
             self.dpt_depth = load_depths_npz(self.img_list, pred_depth_path, norm=norm_depth)
             self.depth_mask = np.ones(self.dpt_depth.shape, dtype=bool)
         elif with_depth:
-            self.depth = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1], reverse=reverse_gt)
+
+            # load GT depth priors with additive noise and misalignment
+            self.depth = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1],
+                                        reverse=reverse_gt, noise_mean=noise_mean, noise_std=noise_std)
+
+            self.depth_mask = np.ones(self.depth.shape, dtype=bool)
+            if offset_x or offset_y:
+                self.offset_depths(offset_y, offset_x)
 
             # black out depth pixels according to pattern [x_retain, x_skip, y_retain, y_skip]
             if sparsify_depth:
-                self.depth_mask = self.sparsify_depths(sparsify_depth_pattern, os.path.join(load_dir, f'sparse_{out_dir}'), self.img_list)
-                self.sparsify_depths(sparsify_depth_pattern, os.path.join(load_dir, f'sparse_{out_dir}'), self.img_list)
-            else:
-                self.depth_mask = np.ones(self.depth.shape, dtype=bool)
+                self.sparsify_depths(sparsify_depth_pattern)
+            
+            # output depth images for visualisation to disk        
+            os.makedirs(os.path.join(load_dir, f'depth_in_{out_dir}'), exist_ok=True)
+            for i in range(self.depth.shape[0]):
+                depth_img = (np.clip(255.0 / self.depth[i].max() * (self.depth[i] - self.depth[i].min()), 0, 255)).astype(np.uint8)
+                imageio.imwrite(os.path.join(os.path.join(load_dir, f'depth_in_{out_dir}', self.img_list[i])), depth_img)
+        
+    # helper function to offset depths to simulate camera-LiDAR misalignment, boundaries are set to 0
+    def offset_depths(self, y_shift, x_shift):
+        shifted_arr = np.zeros_like(self.depth)
+        mask = np.ones_like(self.depth)
+        
+        if y_shift > 0:
+            shifted_arr[:, y_shift:, :] = self.depth[:, :-y_shift, :]
+            mask[:y_shift, :] = 0
+        elif y_shift < 0:
+            shifted_arr[:, :y_shift, :] = self.depth[:, -y_shift:, :]
+            mask[:, y_shift:, :] = 0
+        else:
+            shifted_arr = self.depth
+        
+        if x_shift > 0:
+            shifted_arr[:, :, x_shift:] = shifted_arr[:, :, :-x_shift]
+            shifted_arr[:, :, :x_shift] = 0
+            mask[:, :, :x_shift] = 0
+        elif x_shift < 0:
+            shifted_arr[:, :, :x_shift] = shifted_arr[:, :, -x_shift:]
+            shifted_arr[:, :, x_shift:] = 0
+            mask[:, :, x_shift:] = 0
+        
+        self.depth = shifted_arr
+        self.depth_mask = mask
 
-    def sparsify_depths(self, pattern, sparse_dir, img_list):
+    def sparsify_depths(self, pattern):
         N, H, W = self.depth.shape
-        mask = np.ones(self.depth.shape, dtype=bool)
         x_mask = [True] * pattern[0] + [False] * pattern[1]
         y_mask = [True] * pattern[2] + [False] * pattern[3]
         y = 0
@@ -176,17 +213,11 @@ class DataField(object):
         for h in range(H):
             x = 0
             for w in range(W):
-                self.depth[:,h,w] *= x_mask[x] and y_mask[y]
-                mask[:,h,w] = x_mask[x] and y_mask[y]
+                self.depth_mask[:,h,w] *= (x_mask[x] and y_mask[y])
+                self.depth[:,h,w] *= (x_mask[x] and y_mask[y])
                 x = (x + 1) % len(x_mask)
             y = (y + 1) % len(y_mask)
-        
-        os.makedirs(sparse_dir, exist_ok=True)
-        for i in range(N):
-            depth_img = (np.clip(255.0 / self.depth[i].max() * (self.depth[i] - self.depth[i].min()), 0, 255)).astype(np.uint8)
-            imageio.imwrite(os.path.join(sparse_dir, img_list[i]), depth_img)
-        
-        return mask
+    
 
     def make_c2ws_from_llff(self, poses, bds, spherify, overwrite_hwf=False, visualise=False, bd_factor=0.75):
         if visualise:

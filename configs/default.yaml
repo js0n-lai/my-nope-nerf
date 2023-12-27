@@ -18,6 +18,10 @@ dataloading:
   with_depth: False
   sparsify_depth: False
   sparsify_depth_pattern: [1, 0, 1, 0] # [x_retain, x_skip, y_retain, y_skip]
+  noise_mean: 0 # additive gaussian noise to depths (m)
+  noise_std: 0
+  offset_x: 0 # misalignment offset (pixels)
+  offset_y: 0
   with_mask: False
   spherify: True
   customized_poses: False #use poses other than colmap

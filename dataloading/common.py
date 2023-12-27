@@ -265,7 +265,7 @@ def spherify_poses(poses, bds):
     
     return poses_reset, new_poses, bds, sc, c2w_44
 
-def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1, reverse=None):
+def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1, reverse=None, noise_mean=0, noise_std=0, offset_x=0, offset_y=0):
     depths = []
     for image_name in image_list:
         frame_id = image_name.split('.')[0]
@@ -273,6 +273,11 @@ def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1, reverse=No
         depth = cv2.imread(depth_path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
         depth = depth.astype(np.float32) / 100 # V-KITTI stores depth pixel values in cm
 
+        # add noise but ensure depths are non-negative
+        noise = np.random.normal(noise_mean, noise_std, size=depth.shape)
+        depth = depth + noise
+        depth = np.maximum(depth, 0)
+        
         # rescale according to preprocessing
         if reverse is not None:
             depth *= reverse['sc']
