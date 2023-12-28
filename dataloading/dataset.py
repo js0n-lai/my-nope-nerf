@@ -185,7 +185,7 @@ class DataField(object):
         
         if y_shift > 0:
             shifted_arr[:, y_shift:, :] = self.depth[:, :-y_shift, :]
-            mask[:y_shift, :] = 0
+            mask[:, :y_shift, :] = 0
         elif y_shift < 0:
             shifted_arr[:, :y_shift, :] = self.depth[:, -y_shift:, :]
             mask[:, y_shift:, :] = 0

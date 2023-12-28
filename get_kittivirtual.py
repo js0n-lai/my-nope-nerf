@@ -221,6 +221,10 @@ def make_yaml(dest, args, resolution):
     train["dataloading"]["with_depth"] = args.with_depth
     train["dataloading"]["sparsify_depth"] = args.sparsify_depth
     train["dataloading"]["sparsify_depth_pattern"] = args.sparsify_depth_pattern
+    train["dataloading"]["noise_mean"] = args.noise_mean
+    train["dataloading"]["noise_std"] = args.noise_std
+    train["dataloading"]["offset_x"] = args.offset_x
+    train["dataloading"]["offset_y"] = args.offset_y
 
     train["pose"]["learn_R"] = args.learn_pose
     train["pose"]["learn_t"] = args.learn_pose
@@ -238,7 +242,6 @@ def make_yaml(dest, args, resolution):
         train["distortion"]["learn_scale"] = False
     
     train["training"]["out_dir"] = os.path.join("out", os.path.relpath(dest, "data"))
-    train["training"]["with_ssim"] = args.with_ssim
     train["extract_images"]["resolution"] = [int(np.ceil(x / args.resize_factor)) for x in resolution]
     train["extract_images"]["eval_depth"] = True
     train["extract_images"]["traj_option"] = args.traj_option
@@ -293,10 +296,13 @@ if __name__ == "__main__":
     config.add_argument("--customised-poses", action="store_true", default=False, help="Use poses other than those from COLMAP (default: False)")
     config.add_argument("--customised-focal", action="store_true", default=False, help="Use intrinsics other than those from COLMAP (default: False)")
     config.add_argument("--update-focal", action="store", default=True, help="Enable NoPe-NeRF to update camera intrinsics (default: True)")
-    config.add_argument("--with-ssim", action="store_true", default=False, help="Use SSIM loss when computing DPT reprojection loss (default: False)")
     config.add_argument("--with-depth", action="store_true", default=False, help="Use GT depths (default: False)")
     config.add_argument("--sparsify-depth", action="store_true", default=False, help="Artificially generate sparse depths at runtime by setting pixels to 0 (default: False)")
     config.add_argument("--sparsify-depth-pattern", default=[1, 0, 1, 0], nargs=4, help="If sparsify-depth is enabled, this is the pattern to tile in depth frames expressed as [x_keep, x_skip, y_keep, y_skip] in pixels (default: [1, 0, 1, 0] which keeps all depth pixels).")
+    config.add_argument("--noise-mean", default=0, help="Mean of Gaussian noise added to depth priors (default: 0)")
+    config.add_argument("--noise-std", default=0, help="Standard deviation of Gaussian noise added to depth priors (default: 0)")
+    config.add_argument("--offset-x", default=0, help="Pixels to offset depth frames by to the right (default: 0)")
+    config.add_argument("--offset-y", default=0, help="Pixels to offset depth frames by downward (default: 0)")
     config.add_argument("--traj-option", choices=["sprial", "interp", "bspline"], default="bspline", help="Camera trajectory option for rendering (default: bspline)")
     config.add_argument("--bspline-degree", type=int, default=100, help="Basis function degree for BSpline trajectory (default: 100)")
     config.add_argument("--depth-loss-type", choices=["l1", "invariant"], default="l1", help="Type of depth loss (default: l1)")
