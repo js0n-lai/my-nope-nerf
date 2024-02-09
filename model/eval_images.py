@@ -104,7 +104,7 @@ class Eval_Images(object):
         
         gt_height, gt_width = depth_gt.shape[:2]
         depth_out *= sc
-        depth_out = cv2.resize(depth_out, (gt_width, gt_height), interpolation=cv2.INTER_AREA)
+        depth_out = cv2.resize(depth_out, (gt_width, gt_height), interpolation=cv2.INTER_NEAREST_EXACT)
         
         img_out_dir = os.path.join(render_dir, 'img_out')
         depth_out_dir = os.path.join(render_dir, 'depth_out')
@@ -151,7 +151,8 @@ class Eval_Images(object):
 
         mask_rendered = (depth_out >= min_depth) & (depth_out <= max_depth)
         mask_gt = (depth_gt >= min_depth) & (depth_gt <= max_depth)
-        mask = mask_rendered | mask_gt
+        mask = mask_rendered & mask_gt
+        # mask = mask_gt
 
         tp = (mask_rendered & mask_gt).reshape(1, -1)
         tn = (np.logical_not(mask_rendered) & np.logical_not(mask_gt)).reshape(1, -1)
@@ -198,6 +199,7 @@ class Eval_Images(object):
 
         depth_out = depth_out[mask]
         depth_gt = depth_gt[mask]
+        # breakpoint()
 
         # frame_id = self.img_list[img_idx].split('.')[0]
         # filename = os.path.join(depth_out_dir, '{}_depth.npy'.format(frame_id))

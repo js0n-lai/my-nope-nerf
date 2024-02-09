@@ -76,7 +76,7 @@ def eval(cfg):
         N_imgs = eval_dataset['img'].N_imgs
         img_list = eval_dataset['img'].img_list
         loader = eval_loader
-        render_dir = os.path.join(generation_dir, 'eval', init_method)
+        render_dir = os.path.join(generation_dir, 'eval_new', init_method)
         dataset = eval_dataset
     
     if use_learnt_focal:
@@ -166,6 +166,7 @@ def eval(cfg):
     lpips_metric = lpips_lib.LPIPS(net='vgg').to(device)
     min_depth = cfg['eval_pose']['depth_range'][0]
     max_depth = cfg['eval_pose']['depth_range'][1]
+    # max_depth = 100
 
     # convert preprocessed poses back to original scale
     if 'reverse_gt' in dir(dataset['img']):

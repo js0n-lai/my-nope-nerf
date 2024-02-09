@@ -20,8 +20,8 @@ class DataField(object):
                  load_ref_img=False,customized_poses=False,
                  customized_focal=False,resize_factor=2, depth_net='dpt',crop_size=0, 
                  random_ref=False,norm_depth=False,load_colmap_poses=True, sample_rate=8,
-                 bd_factor=0.75, sparsify_depth=False, sparsify_depth_pattern=[1, 0, 1, 0],
-                 noise_mean=0, noise_std=0, offset_x=0, offset_y=0,
+                 bd_factor=0.75, depth_scale=1, sparsify_depth=False, sparsify_depth_pattern=[1, 0, 1, 0],
+                 noise_mean=0, noise_std=0, offset_x=0, offset_y=0, remove_sky=False,
                  out_dir=None, show_pose_only=False, **kwargs):
         """load images, depth maps, etc.
         Args:
@@ -150,21 +150,26 @@ class DataField(object):
             self.c2ws_colmap = c2ws_colmap[i_train]
 
         # dense and noise-free GT depths
+        # remove sky pixels from GT depths during eval
+        remove_sky_eval = (mode == 'eval')
         try:
-            self.gt_depth = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1])
+            self.gt_depth,a = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, depth_scale=depth_scale,
+                                             H=self.imgs.shape[-2], W=self.imgs.shape[-1], remove_sky=remove_sky_eval)
         except AttributeError:
             self.gt_depth = None
-
+        
         if not use_DPT and not with_depth:
             self.dpt_depth = load_depths_npz(self.img_list, pred_depth_path, norm=norm_depth)
             self.depth_mask = np.ones(self.dpt_depth.shape, dtype=bool)
         elif with_depth:
 
             # load GT depth priors with additive noise and misalignment
-            self.depth = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, H=self.imgs.shape[-2], W=self.imgs.shape[-1],
-                                        reverse=reverse_gt, noise_mean=noise_mean, noise_std=noise_std)
+            # breakpoint()
+            self.depth, self.depth_mask = load_gt_depths(self.img_list, load_dir, crop_ratio=crop_ratio, depth_scale=depth_scale,
+                                                         H=self.imgs.shape[-2], W=self.imgs.shape[-1], reverse=reverse_gt,
+                                                         noise_mean=noise_mean, noise_std=noise_std, remove_sky=remove_sky)
 
-            self.depth_mask = np.ones(self.depth.shape, dtype=bool)
+            # self.depth_mask = np.ones(self.depth.shape, dtype=bool)
             if offset_x or offset_y:
                 self.offset_depths(offset_y, offset_x)
 
@@ -174,9 +179,12 @@ class DataField(object):
             
             # output depth images for visualisation to disk        
             os.makedirs(os.path.join(load_dir, f'depth_in_{out_dir}'), exist_ok=True)
+            extension = '_eval' if remove_sky_eval else ''
+
             for i in range(self.depth.shape[0]):
                 depth_img = (np.clip(255.0 / self.depth[i].max() * (self.depth[i] - self.depth[i].min()), 0, 255)).astype(np.uint8)
-                imageio.imwrite(os.path.join(os.path.join(load_dir, f'depth_in_{out_dir}', self.img_list[i])), depth_img)
+                img_name = f'{os.path.splitext(self.img_list[i])[0]}{extension}.png'
+                imageio.imwrite(os.path.join(os.path.join(load_dir, f'depth_in_{out_dir}', img_name)), depth_img)
         
     # helper function to offset depths to simulate camera-LiDAR misalignment, boundaries are set to 0
     def offset_depths(self, y_shift, x_shift):

@@ -265,24 +265,29 @@ def spherify_poses(poses, bds):
     
     return poses_reset, new_poses, bds, sc, c2w_44
 
-def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1, reverse=None, noise_mean=0, noise_std=0, offset_x=0, offset_y=0):
+def load_gt_depths(image_list, datadir, depth_scale=1, H=None, W=None, crop_ratio=1, reverse=None, noise_mean=0, noise_std=0, offset_x=0, offset_y=0, remove_sky=False):
     depths = []
+    depth_masks = []
     for image_name in image_list:
         frame_id = image_name.split('.')[0]
         depth_path = os.path.join(datadir, 'depth', '{}.png'.format(frame_id))
         depth = cv2.imread(depth_path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
-        depth = depth.astype(np.float32) / 100 # V-KITTI stores depth pixel values in cm
+        depth = depth.astype(np.float32) * depth_scale # conversion factor from pixel values to metres for dataset: V-KITTI = 100:1, KITTI = 256:1
 
         # add noise but ensure depths are non-negative
         noise = np.random.normal(noise_mean, noise_std, size=depth.shape)
         depth = depth + noise
         depth = np.maximum(depth, 0)
-        
+        # breakpoint()
+        factor = 1
+
         # rescale according to preprocessing
         if reverse is not None:
             depth *= reverse['sc']
+            factor *= reverse['sc']
             if reverse.get('sc_spherify') is not None:
                 depth *= reverse['sc_spherify']
+                factor *= reverse['sc_spherify']
 
         # depth = depth.astype(np.float32) / 1000
         if crop_ratio != 1:
@@ -291,16 +296,20 @@ def load_gt_depths(image_list, datadir, H=None, W=None, crop_ratio=1, reverse=No
             crop_size_w = int(w*crop_ratio)
             depth = depth[crop_size_h:h-crop_size_h, crop_size_w:w-crop_size_w]
         
+        if remove_sky:
+            depth[depth > (600 * factor)] = 0
+
+        mask = (depth > 0).astype(np.uint8)
         if H is not None:
-            # mask = (depth > 0).astype(np.uint8)
-            depth_resize = cv2.resize(depth, (W, H), interpolation=cv2.INTER_AREA)
-            # mask_resize = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
+            depth_resize = cv2.resize(depth, (W, H), interpolation=cv2.INTER_NEAREST_EXACT)
+            mask_resize = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST_EXACT)
+            depth_resize[mask_resize < 0.5] = 0
             depths.append(depth_resize)
-            # masks.append(mask_resize > 0.5)
+            depth_masks.append(mask_resize > 0.5)
         else:
             depths.append(depth)
-            # masks.append(depth > 0)
-    return np.stack(depths)
+            depth_masks.append(mask)
+    return (np.stack(depths), np.stack(depth_masks))
 
 def load_depths(image_list, datadir, H=None, W=None):
     depths = []

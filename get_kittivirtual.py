@@ -219,6 +219,7 @@ def make_yaml(dest, args, resolution):
     train["dataloading"]["resize_factor"] = args.resize_factor
     train["dataloading"]["load_colmap_poses"] = args.load_colmap_poses
     train["dataloading"]["with_depth"] = args.with_depth
+    train["dataloading"]["depth_scale"] = args.depth_scale
     train["dataloading"]["sparsify_depth"] = args.sparsify_depth
     train["dataloading"]["sparsify_depth_pattern"] = args.sparsify_depth_pattern
     train["dataloading"]["noise_mean"] = args.noise_mean
@@ -228,6 +229,10 @@ def make_yaml(dest, args, resolution):
 
     train["pose"]["learn_R"] = args.learn_pose
     train["pose"]["learn_t"] = args.learn_pose
+    if not args.learn_pose:
+        train["training"]["pc_weight"] = [0, 0]
+        train["training"]["rgb_s_weight"] = [0, 0]
+
     train["pose"]["init_pose"] = args.init_pose
     if args.load_colmap_poses:
         train["pose"]["init_pose_type"] = "colmap"
@@ -297,6 +302,7 @@ if __name__ == "__main__":
     config.add_argument("--customised-focal", action="store_true", default=False, help="Use intrinsics other than those from COLMAP (default: False)")
     config.add_argument("--update-focal", action="store", default=True, help="Enable NoPe-NeRF to update camera intrinsics (default: True)")
     config.add_argument("--with-depth", action="store_true", default=False, help="Use GT depths (default: False)")
+    config.add_argument("--depth-scale", action="store", default=1/100, help="Scale factor between pixel values and metres (default: 1/100)")
     config.add_argument("--sparsify-depth", action="store_true", default=False, help="Artificially generate sparse depths at runtime by setting pixels to 0 (default: False)")
     config.add_argument("--sparsify-depth-pattern", default=[1, 0, 1, 0], nargs=4, help="If sparsify-depth is enabled, this is the pattern to tile in depth frames expressed as [x_keep, x_skip, y_keep, y_skip] in pixels (default: [1, 0, 1, 0] which keeps all depth pixels).")
     config.add_argument("--noise-mean", default=0, help="Mean of Gaussian noise added to depth priors (default: 0)")
